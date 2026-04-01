@@ -395,7 +395,7 @@ async fn compilation_fix_assistant_for_one_fn(
                         // let mut already_rng: Vec<usize> = Vec::new();
                         while i < initial_error_num && compile_error_set.len() > 0 {
                             i += 1;
-                            info!("{}_{}", sig, i);
+                            info!("fix {} iter {}", sig, i);
                             let random_num = rand::rng().random_range(0..compile_error_set.len());
                             // while already_rng.contains(&random_num) {
                             //     random_num = rand::thread_rng().gen_range(0..compile_error_set.len());
@@ -436,7 +436,7 @@ async fn compilation_fix_assistant_for_one_fn(
                             // if new_error_set.len() < compile_error_set.len() {
                         }
                         if network_error {
-                            error!("Fix failed for {}", fn_name);
+                            error!("Fix failed for {}: network error", fn_name);
                             continue;
                         }
                         let sig = format!("fn test_{}_{:02}()", fn_name, id);

@@ -43,7 +43,6 @@ pub fn run_test(
             .output()
             .expect("Failed to run tests");
     } else {
-        println!("Generating coverage report...{:?}{:?}", project_dir, work_path);
         let coverage_output = Command::new("cargo")
             .args([
                 "llvm-cov",
@@ -824,6 +823,7 @@ fn gen_coverage_and_pass_rate(
                             let pos = mod_code.len() - 1;
                             mod_code.splice(pos..pos, common);
                             let sig = format!("fn test_{}_{:02}()", fn_name, num);
+                            info!("Running test fn test_{}_{:02}()", fn_name, tests);
                             let mut fn_code =
                                 vec!["#[test]".to_string()];
                             fn_code.extend(test.attrs.clone().iter().map(|attr| {
@@ -918,6 +918,7 @@ fn gen_coverage_and_pass_rate(
         if tests_run == 0 {
             let mut mod_code = code_template.clone();
             let sig = format!("fn test_{}()", fn_name,);
+            info!("Running test fn test_{}_{:02}()", fn_name, tests);
             let mut fn_code = vec!["#[test]".to_string()];
             fn_code.push(sig);
             let empty_codes = vec!["{".to_string(), "}".to_string()];
@@ -1199,6 +1200,7 @@ fn gen_codes_lines_and_branches_covered(
                                 let pos = mod_code.len() - 1;
                                 mod_code.splice(pos..pos, common);
                                 let sig = format!("fn test_{}_{:02}()", fn_name, num);
+                                info!("Running test fn test_{}_{:02}()", fn_name, num);
                                 let mut fn_code =
                                     vec!["#[test]".to_string()];
                                 fn_code.extend(test.attrs.clone().iter().map(|attr| {
