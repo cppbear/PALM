@@ -19,7 +19,7 @@ The source repositories have separate Git histories. Selected files are imported
 
 The Rust workspace, installation script, and Docker scripts now reside at the repository root. The two original README files are consolidated, and the root `.gitignore` retains all original rules, including `api.json`.
 
-Rust source files, prompt templates, executable permissions, the pinned `nightly-2025-03-19` toolchain, and `Cargo.lock` are preserved from the PALM baseline. All five tool crates remain workspace members.
+Rust source files, prompt templates, executable permissions, the pinned `nightly-2025-03-19` toolchain, and `Cargo.lock` are preserved from the PALM baseline. All five tool crates remain workspace members. The root workspace explicitly excludes `examples/bytes`, allowing that target to be used as a separate Cargo workspace.
 
 The existing container mount point remains `/home/palm/palm`. Commands in the project documentation start from the new repository root or an explicitly identified target directory.
 

@@ -2,7 +2,7 @@
 
 ## bytes
 
-The bundled target is [tokio-rs/bytes](https://github.com/tokio-rs/bytes), version 1.10.0. It retains its own source files, tests, and license.
+The bundled target is [tokio-rs/bytes](https://github.com/tokio-rs/bytes), version 1.10.0. It is excluded from PALM's tool workspace and retains its own source files, tests, and license.
 
 ### Install the Tools
 

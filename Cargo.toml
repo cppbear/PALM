@@ -1,3 +1,4 @@
 [workspace]
 resolver = "2"
 members = ["brinfo", "focxt", "focxt/call_chain", "utgen", "build-utils"]
+exclude = ["examples/bytes"]

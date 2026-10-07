@@ -96,7 +96,7 @@ flowchart LR
 | `focxt/` | 上下文构建工具。解析模块树、use、类型、impl、trait 和函数，生成提示词上下文代码。 |
 | `utgen/` | 测试生成、编译筛选、覆盖率统计和 LLM 修复工具。 |
 | `build-utils/` | 构建辅助模块，供依赖 rustc_private 的 crate 在 build script 中使用。 |
-| `examples/bytes/` | 示例目标项目，来自 `tokio-rs/bytes`，可用于跑通流程。 |
+| `examples/bytes/` | 来自 `tokio-rs/bytes` 的独立被测示例，排除在工具 workspace 之外。 |
 | `docker/` | Docker 构建和运行脚本，用于不想在本机配置 Rust nightly 的场景。 |
 | `install.sh` | 默认安装 `brinfo`、`focxt/call_chain`、`focxt` 和 `utgen`。 |
 
