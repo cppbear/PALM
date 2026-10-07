@@ -9,5 +9,5 @@ pub use gene::gen_tests_project;
 pub use config::{ConfigError, LlmConfig};
 pub use gene::LLM;
 pub use analysis::{analyze_project, validate_analysis, validate_repair};
-pub use run::{gen_test_rate, llm_fix, gen_test_rate_aggregated};
+pub use run::{collect_coverage, gen_test_rate, llm_fix, gen_test_rate_aggregated};
 pub use utils::{comment_out_tests, rename_tests_to_bak};

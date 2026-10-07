@@ -49,6 +49,7 @@ fn help_and_non_model_commands_do_not_load_configuration() {
         vec!["gen", "--help"],
         vec!["fix", "--help"],
         vec!["analyze", "--help"],
+        vec!["coverage", "--help"],
         vec!["pre-process", "-p", "."],
     ] {
         let output = fixture

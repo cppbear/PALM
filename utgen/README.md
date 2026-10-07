@@ -4,7 +4,7 @@ utgen generates Rust tests from condition chains and focal context, checks compi
 
 ## Prerequisites
 
-Model configuration is loaded at runtime, once per `gen` or `fix` command. Building, installing, running help, `pre-process`, and `analyze` do not require it.
+Model configuration is loaded at runtime, once per `gen` or `fix` command. Building, installing, running help, `pre-process`, `analyze`, and `coverage` do not require it.
 
 Copy [api.example.json](res/api.example.json) to `utgen/res/api.json` from the repository root, then replace its placeholders:
 
@@ -78,10 +78,11 @@ The following is a command reference rather than captured help output. Use `utge
 | --- | --- |
 | `pre-process` | Rename each selected crate's `tests/` to `tests.bak/` and replace test-only source ranges with whitespace while preserving line breaks and byte offsets. |
 | `analyze` | Clear Cargo's check cache, run brinfo and focxt, and validate their function indices and artifacts. Currently supports one standalone crate passed with `-p`. |
+| `coverage` | Run existing tests once and export XML/JSON with test code excluded. Supports one standalone crate passed with `-p`. |
 | `gen` | Generate candidates, check compilation, and collect pre-repair statistics. |
 | `fix` | Attempt to repair candidates with compilation errors and collect post-repair statistics using unit-test insertion. |
 
-All four commands take `-p, --project-dir`. Use `-w, --work-dir` for individual crates in a larger project. Both relative paths are resolved against the current shell directory; work directories do not resolve against `--project-dir`. Work directories may be repeated or comma-separated and default to the project directory. The current `analyze` command requires a single standalone crate; use that crate as `-p`, with no separate work-directory selection.
+All commands take `-p, --project-dir`. Except for `coverage`, commands also accept `-w, --work-dir` for individual crates in a larger project. Both relative paths are resolved against the current shell directory; work directories do not resolve against `--project-dir`. Work directories may be repeated or comma-separated and default to the project directory. The current `analyze` command requires a single standalone crate; use that crate as `-p`, with no separate work-directory selection.
 
 ### Preprocessing
 
@@ -108,6 +109,22 @@ utgen analyze -p <target-crate-path>
 The target must have `Cargo.toml` and `src/`, with no existing `brinfo/` or `focxt/` directory. Use a fresh prepared copy when repeating analysis. Tool failures return a nonzero exit status. No model configuration is needed.
 
 For manual analysis, run `cargo clean`, `cargo brinfo`, then `focxt -c <target-crate-path>` in the prepared crate. A prior `cargo check` can otherwise prevent the compiler wrapper from running.
+
+### Coverage of existing tests
+
+On an original working copy, before preprocessing:
+
+```sh
+utgen coverage -p <original-crate-copy>
+```
+
+This command needs neither model configuration nor analysis artifacts. It writes `coverage.xml` and `coverage.json` in the crate directory from a single test run. Assertion failures remain visible in test output and coverage is still exported; compilation or report-export failures return a nonzero exit status. A failed command does not guarantee valid output files.
+
+The same coverage entry point is used by generation and repair. It temporarily adds `#[coverage(off)]` to test-only modules (including generated `llmtests`), standalone test functions, and `#[cfg(test)]` helper functions. Module exclusion also covers nested helpers. Production functions called by tests remain instrumented; mixed production/test files are never excluded wholesale. Integration-test files use cargo-llvm-cov's default directory exclusions. Doc tests are not run by `--tests`.
+
+The nightly feature gate is inserted temporarily on the same line at crate roots, leaving compiler flags and Cargo configuration untouched. Ordinary compilation and repair need no coverage attributes. Coverage annotations are removed by restoring the bytes saved at coverage entry, after success or a returned build/report error. Temporary insertions preserve line numbers, but columns and byte offsets can change while measuring; use working copies and do not edit them concurrently. Recovery for the broader generation/repair backup flow and forced termination is still pending.
+
+Scope is a standalone crate with sources under `src/` and Cargo target entry files. Test identification reuses preprocessing's conservative `cfg` rules; macros are not expanded, and unmarked helpers outside test-only modules cannot be inferred as test-only. The pinned nightly and cargo-llvm-cov version are required.
 
 ### Generation
 
@@ -150,6 +167,6 @@ Paths under `utgen/` below are relative to `--project-dir`:
 | `utgen/fixed_result/` | Post-repair coverage and execution statistics per focal function. |
 | `utgen/original_result.json` | Comparison statistics when the original integration-test backup is available. |
 
-`coverage.xml`, `coverage.json`, and `error_output.json` are intermediate files in the work directory and may be deleted after parsing. The current implementation does not produce an HTML report.
+`coverage.xml`, `coverage.json`, and `error_output.json` are intermediate files in the work directory and may be deleted after generation/repair parses them. The standalone `coverage` command retains both reports. The current implementation does not produce an HTML report.
 
 See the [deterministic minimal pipeline](../docs/minimal-pipeline.md) and the [bytes example](../examples/README.md) for a working-copy workflow and the [Chinese technical guide](../docs/palm-rust-unit-test-generation.md) for implementation details.

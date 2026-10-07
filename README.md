@@ -64,6 +64,8 @@ Run `docker/docker-run` from the same directory to mount the repository at `/hom
 
 ## Workflow
 
+To measure existing tests before preprocessing, run `utgen coverage -p <original-crate-copy>`. It runs tests once, excludes test code from coverage, and writes `coverage.xml` and `coverage.json` without model configuration. Keep this baseline copy separate from the generation copy.
+
 On a fresh working copy of a standalone crate, run `utgen pre-process -p <target-crate-path>` before `utgen analyze -p <target-crate-path>`. Analysis clears Cargo's check cache, runs brinfo and focxt, and verifies their outputs. It rejects existing `brinfo/` or `focxt/` directories so previous analysis results cannot be mixed into the run.
 
 Then use `utgen gen` and `utgen fix` for generation and compilation repair. Pass `--requirement --context` to `utgen gen` to include path constraints and focal context. Preprocessing and test checks modify the target tree; use a working copy of the target project.

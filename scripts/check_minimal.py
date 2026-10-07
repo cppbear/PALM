@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Exercise PALM on an isolated, deterministic crate; never use a real model."""
 import argparse
-import hashlib
 import http.server
 import json
 import os
@@ -11,14 +10,16 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import xml.etree.ElementTree as ET
 
 REPO = Path(__file__).resolve().parents[1]
 
 
 def snapshot(root):
-    return {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest()
-            for p in sorted((root / 'src').rglob('*.rs'))} | {
-                'Cargo.toml': hashlib.sha256((root / 'Cargo.toml').read_bytes()).hexdigest()}
+    return {str(p.relative_to(root)): p.read_bytes()
+            for directory in ['src', 'tests', 'tests.bak']
+            for p in sorted((root / directory).rglob('*.rs'))} | {
+                'Cargo.toml': (root / 'Cargo.toml').read_bytes()}
 
 
 def source_fragment(root, loc):
@@ -129,14 +130,68 @@ def main():
 
     version = run('coverage-version', ['cargo', 'llvm-cov', '--version'])
     assert version.stdout.strip() == 'cargo-llvm-cov 0.6.16', version.stdout
-    run('original-coverage', ['cargo', 'llvm-cov', '--tests', '--branch', '--json', '--output-path', 'original-coverage.json'], original)
-    original_coverage = json.loads((original / 'original-coverage.json').read_text())
+    baseline = snapshot(original)
+    # A test side effect must occur once even though both formats are exported.
+    counter = work / 'coverage-runs.txt'
+    env['PALM_FIXTURE_RUN_LOG'] = str(counter)
+    coverage_run = run('original-coverage', ['utgen', 'coverage', '-p', str(original)], original)
+    assert counter.read_text() == 'x', 'coverage ran the test body more than once'
+    env.pop('PALM_FIXTURE_RUN_LOG')
+    assert snapshot(original) == baseline
+    assert '2 passed; 0 failed' in coverage_run.stdout and '1 passed; 0 failed' in coverage_run.stdout
+    original_coverage = json.loads((original / 'coverage.json').read_text())
+    (original / 'coverage.json').rename(original / 'original-coverage.json')
+    (original / 'coverage.xml').rename(original / 'original-coverage.xml')
+    covered_functions = [function['name'] for data in original_coverage['data'] for function in data['functions']]
+    assert not any(marker in name for name in covered_functions
+                   for marker in ['existing_unit_test', 'before_helper', 'test_only_helper', 'record_run', 'existing_integration_test']), covered_functions
+    assert any('classify' in name for name in covered_functions), covered_functions
+    xml = ET.parse(original / 'original-coverage.xml')
+    assert not any(marker in method.get('name', '') for method in xml.iter('method')
+                   for marker in ['existing_unit_test', 'before_helper', 'test_only_helper', 'record_run'])
+    # Test-only lines must disappear from both the numerator and denominator.
+    lib_lines = (original / 'src/lib.rs').read_text().splitlines()
+    test_line = next(i for i, line in enumerate(lib_lines, 1) if 'fn existing_unit_test' in line)
+    for file in (file for data in original_coverage['data'] for file in data['files']):
+        if Path(file['filename']) == original / 'src/lib.rs':
+            assert not any(segment[0] == test_line and segment[3] for segment in file['segments'])
+    for cls in xml.iter('class'):
+        if cls.get('filename', '').endswith('src/lib.rs'):
+            assert not any(int(line.get('number')) == test_line for line in cls.findall('./lines/line'))
     original_file = next(file for data in original_coverage['data'] for file in data['files']
                          if Path(file['filename']) == original / 'src/lib.rs')
     condition_line = (original / 'src/lib.rs').read_text().splitlines().index('    if support::positive(value) {') + 1
     # Library and unit-test binaries may emit separate records for one location.
     records = [branch for branch in original_file['branches'] if branch[0] == condition_line]
     assert any(branch[4] > 0 for branch in records) and any(branch[5] > 0 for branch in records)
+    # Preserve assertion failures as test outcomes, but stop on build errors;
+    # temporary coverage attributes must be removed in either case.
+    lib = original / 'src/lib.rs'
+    saved_lib = lib.read_bytes()
+    try:
+        lib.write_bytes(saved_lib.replace(b'assert_eq!(super::classify(2), 1)', b'assert_eq!(super::classify(2), 99)'))
+        failed_test_source = snapshot(original)
+        failed_test = run('coverage-failed-test', ['utgen', 'coverage', '-p', str(original)], original)
+        assert '1 passed; 1 failed' in failed_test.stdout
+        assert snapshot(original) == failed_test_source
+        lib.write_bytes(saved_lib + b'\ncompile_error!("coverage build failure fixture");\n')
+        failed_build_source = snapshot(original)
+        failure = run('coverage-failed-build', ['utgen', 'coverage', '-p', str(original)], original, expected=1)
+        assert 'coverage build failure fixture' in failure.stderr and 'panicked' not in failure.stderr
+        assert snapshot(original) == failed_build_source
+        lib.write_bytes(saved_lib)
+        # Block only the JSON export, after the tests and XML export succeed.
+        (original / 'coverage.json').unlink()
+        (original / 'coverage.json').mkdir()
+        try:
+            report_failure = run('coverage-failed-report', ['utgen', 'coverage', '-p', str(original)], original, expected=1)
+            assert 'report --json' in report_failure.stderr and 'panicked' not in report_failure.stderr
+            assert snapshot(original) == baseline
+        finally:
+            (original / 'coverage.json').rmdir()
+    finally:
+        lib.write_bytes(saved_lib)
+    assert snapshot(original) == baseline
     state = {'generation': 0, 'repair': 0, 'errors': []}
 
     class Model(http.server.BaseHTTPRequestHandler):
@@ -160,7 +215,7 @@ def main():
                         'threshold': 'assert!(threshold(2));',
                         'double': 'assert_eq!(double("bad"), 4);',
                     }[function]
-                    answer = '#[test]\nfn generated() {\n    ' + body + '\n}\n'
+                    answer = 'fn generated_helper() -> i32 { 1 }\n#[test]\nfn generated() {\n    assert_eq!(generated_helper(), 1);\n    ' + body + '\n}\n'
                     state['generation'] += 1
                 else:
                     file = re.search(r'You can only modify lines \d+ to \d+ in file (.+?)\. For your answer', user).group(1)
@@ -194,6 +249,12 @@ def main():
         assert snapshot(target) == prepared
         run('repair', ['utgen', 'fix', '-p', str(target)])
         assert snapshot(target) == prepared
+        # The last repaired candidate's raw data remains after per-function parsing.
+        # Exporting it again must not run tests or contain llmtests/helper records.
+        run('generated-coverage-report', ['cargo', 'llvm-cov', 'report', '--json', '--output-path', 'generated-coverage.json'])
+        generated_coverage = json.loads((target / 'generated-coverage.json').read_text())
+        generated_functions = [function['name'] for data in generated_coverage['data'] for function in data['functions']]
+        assert generated_functions and not any('llmtests' in name or 'generated_helper' in name for name in generated_functions), generated_functions
         assert not state['errors'], state
         assert state['generation'] == 6 and state['repair'] >= 1, state
         for directory in ['result', 'fixed_result']:
@@ -203,6 +264,8 @@ def main():
                 assert all(r['tests_compiled'] == r['tests'] and r['tests_passed'] == r['tests_run'] and r['tests_run'] > 0 for r in results), results
             classify = next(r for r in results if r['function_name'] == 'palm_fixture::classify')
             assert classify['branches_covered'] == 2 and classify['branches'] == 2, classify
+            assert all(not (branch['positive'] and branch['negative'])
+                       for _, branches in classify['codes_branches_covered'] for branch in branches), classify
         double = json.loads((target / f"utgen/result/{names['palm_fixture::nested::double']}.json").read_text())
         assert double['tests_compiled'] == 0 and double['tests'] == 1, double
         assert not list((target / 'src').rglob('*.bak'))

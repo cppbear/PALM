@@ -43,19 +43,8 @@ pub fn run_test(
             .output()
             .expect("Failed to run tests");
     } else {
-        let coverage_output = Command::new("cargo")
-            .args([
-                "llvm-cov",
-                "--tests",
-                "--ignore-run-fail",
-                "--branch",
-                "--cobertura",
-                "--output-path",
-                "coverage.xml",
-            ]) // RUST_BACKTRACE=full cargo llvm-cov --tests --ignore-run-fail --branch --cobertura
-            .current_dir(work_path)
-            .output()
-            .expect("Failed to generate coverage report");
+        let coverage_output = super::coverage::collect_coverage(work_path, is_json)
+            .expect("Failed to collect coverage");
         if !is_integration {
             return_value = String::from_utf8_lossy(&coverage_output.stdout)
                 .to_string()
@@ -70,21 +59,6 @@ pub fn run_test(
                 .lines()
                 .map(|line| line.to_string())
                 .collect::<Vec<String>>();
-        }
-        if is_json {
-            let json_output = Command::new("cargo")
-                .args([
-                    "llvm-cov",
-                    "--tests",
-                    "--ignore-run-fail",
-                    "--branch",
-                    "--json",
-                    "--output-path",
-                    "coverage.json",
-                ])
-                .current_dir(work_path)
-                .output()
-                .expect("Failed to generate coverage report");
         }
     }
     return return_value;

@@ -1,4 +1,5 @@
 static TIMEOUT_DERIVE: &str = "#[timeout(1000)]";
+mod coverage;
 mod coverage_json;
 mod integration;
 mod llm_fix;
@@ -12,3 +13,5 @@ pub use prepare::add_ntest_dependency;
 // pub use run::cargo_clean;
 pub use run::gen_test_rate;
 pub use run::gen_test_rate_aggregated;
+
+pub use coverage::collect_coverage;
