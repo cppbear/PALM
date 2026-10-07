@@ -36,9 +36,10 @@ Prompt templates and request parameters are unchanged. Model configuration is no
 | Check | Result |
 | --- | --- |
 | Workspace build with no `api.json` | Passed on the pinned nightly. |
-| Default workspace tests with no model credentials | Passed: 12 tests, one real-service test ignored. |
+| Default workspace tests with no model credentials | Passed: 13 tests after the proxy-isolation fix, one real-service test ignored. |
 | Configuration tests | File loading and reload, explicit-file precedence, environment-selected file, field overrides, environment-only configuration, missing/empty fields, unreadable file, and redacted diagnostics passed. |
 | Local HTTP model fixtures | Generation and repair request paths use the runtime endpoint, key, and model; existing request parameters and usage parsing are preserved. |
+| Proxy isolation | The new subprocess regression failed before the fix and passed after it. Both local request fixtures explicitly bypass system proxies; the full test suite also passed with upper/lowercase proxy variables set to `http://127.0.0.1:9` and both `NO_PROXY` variants empty. |
 | CLI tests | Help and non-model commands do not load model configuration; missing configuration stops both `gen` and `fix` before target modification; `--config` works before or after the subcommand. |
 | Installer behavior checks with a substitute Cargo executable | Other working directories, paths with spaces, tool selection, validation before installation, help, preserved diagnostics/exit status, and stopping after failure passed. |
 | Actual installation | All four packages installed without model configuration into an isolated installation directory; existing user-installed tools were not replaced. |
@@ -47,6 +48,8 @@ Prompt templates and request parameters are unchanged. Model configuration is no
 
 The installer retains Cargo output, uses the repository directory to select its toolchain, and no longer runs an unconditional `cargo clean`.
 
+The proxy regression configures only child-process environments, so parallel tests do not change one another's environment. The ordinary LLM constructor retains the SDK's default proxy behavior. The fixtures inject a separate HTTP client with proxies disabled. A test-only `reqwest` dependency reuses the existing locked version; dependency versions, checksums, and lockfile format were not changed.
+
 The [GitHub Actions workflow](../.github/workflows/ci.yml) configures the build, default tests, CLI help checks, installer syntax/help, and standalone bytes metadata checks on Ubuntu 24.04. Its YAML was parsed locally. A hosted workflow run remains to be verified after publication; this document does not claim a Linux CI pass.
 
 ## Validation Limits and Next Batch
@@ -54,7 +57,7 @@ The [GitHub Actions workflow](../.github/workflows/ci.yml) configures the build,
 - No real model service was contacted. Local fixtures validate request construction and response handling, not model compatibility or generation quality.
 - The tests added here do not exercise preprocessing correctness, focal-context completeness, generated-test insertion, compilation repair, or coverage measurement end to end.
 - Docker was not built: the local Docker daemon was unavailable. Linux runtime validation remains pending.
-- The pinned toolchain and `Cargo.lock` were retained. Compatibility of the coverage tool and target-crate dependencies needs separate verification.
+- The pinned toolchain and existing dependency versions were retained; `Cargo.lock` adds only the test dependency edge described above. Compatibility of the coverage tool and target-crate dependencies needs separate verification.
 - `utgen analyze` remains a logging-only command. Request concurrency, source restoration, cache validity, and coverage-baseline semantics are unchanged.
 
 The next batch should use a small target crate to verify the relationship between prepared source files, analysis locations, function identities, focal context, and generated tests. It should establish failure propagation and coverage semantics before proceeding to a large bytes run.

@@ -2070,6 +2070,7 @@ dependencies = [
  "quote",
  "rand 0.9.1",
  "regex",
+ "reqwest",
  "serde",
  "serde_json",
  "simplelog",

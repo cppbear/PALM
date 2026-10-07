@@ -60,6 +60,8 @@ cargo test --workspace --locked
 
 Default tests cover configuration loading, CLI configuration errors, and both model-request paths against a local HTTP fixture. They require no real model credentials and do not contact a model service.
 
+Local HTTP fixtures explicitly bypass system proxies. A subprocess regression checks both request paths with proxy variables set and `NO_PROXY` empty, without changing the parallel test runner's environment. Normal model requests retain system-proxy support.
+
 To explicitly run the real-service smoke test after setting `PALM_CONFIG` or the three model environment variables:
 
 ```sh

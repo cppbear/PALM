@@ -12,11 +12,18 @@ use futures::StreamExt;
 #[derive(Clone)]
 pub struct LLM {
     config: LlmConfig,
+    client: Client<OpenAIConfig>,
 }
 
 impl LLM {
     pub fn new(config: LlmConfig) -> Self {
-        Self { config }
+        let api_config = OpenAIConfig::new()
+            .with_api_base(&config.base)
+            .with_api_key(&config.key);
+        Self {
+            config,
+            client: Client::with_config(api_config),
+        }
     }
 
     pub async fn fetch_answer(
@@ -26,10 +33,7 @@ impl LLM {
         n: u8,
         stream: bool,
     ) -> Result<(Vec<String>, u32, u32), Box<dyn std::error::Error>> {
-        let config = OpenAIConfig::new()
-            .with_api_base(&self.config.base)
-            .with_api_key(&self.config.key);
-        let client = Client::with_config(config);
+        let client = &self.client;
         let system_msg = if system_pt.is_none() {
             None
         } else {
@@ -100,10 +104,7 @@ impl LLM {
         n: u8,
         stream: bool,
     ) -> Result<(Vec<String>, u32, u32), Box<dyn std::error::Error + Send>> {
-        let config = OpenAIConfig::new()
-            .with_api_base(&self.config.base)
-            .with_api_key(&self.config.key);
-        let client = Client::with_config(config);
+        let client = &self.client;
         // let msg = ChatCompletionRequestUserMessageArgs::default()
         //     .content(prompt)
         //     .build()?;
@@ -214,11 +215,16 @@ mod tests {
                 request
             }).await.expect("local mock server timed out")
         });
-        let llm = LLM::new(LlmConfig {
+        let mut llm = LLM::new(LlmConfig {
             base: format!("http://{address}/v1"),
             key: "local-test-key".into(),
             model: "local-model".into(),
         });
+        // Only the local fixture bypasses proxies. LLM::new keeps the SDK's
+        // default proxy behavior for production and the opt-in live test.
+        llm.client = llm
+            .client
+            .with_http_client(reqwest::Client::builder().no_proxy().build().unwrap());
         (llm, server)
     }
 
@@ -229,6 +235,37 @@ mod tests {
         assert_eq!(request["top_p"], 0.0);
         assert_eq!(request["n"], 1);
         assert_eq!(request["stream"], false);
+    }
+
+    #[test]
+    fn mock_requests_bypass_environment_proxies() {
+        // Set proxy variables only in child processes: changing the current
+        // process environment would race with parallel Rust tests.
+        for name in [
+            "gene::llm::tests::generation_uses_runtime_config_and_preserves_request_parameters",
+            "gene::llm::tests::repair_uses_runtime_config_and_preserves_request_parameters",
+        ] {
+            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+            command.args([name, "--exact"]);
+            for variable in [
+                "HTTP_PROXY",
+                "HTTPS_PROXY",
+                "ALL_PROXY",
+                "http_proxy",
+                "https_proxy",
+                "all_proxy",
+            ] {
+                command.env(variable, "http://127.0.0.1:9");
+            }
+            command.env("NO_PROXY", "").env("no_proxy", "");
+            let output = command.output().unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                output.status.success() && stdout.contains("1 passed"),
+                "{name} failed with proxy environment variables:\n{stdout}\n{}",
+                String::from_utf8_lossy(&output.stderr),
+            );
+        }
     }
 
     #[tokio::test]

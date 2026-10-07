@@ -24,5 +24,8 @@ time = "0.3"
 tokio = { version = "1", features = ["full"] }
 walkdir = "2.5"
 
+[dev-dependencies]
+reqwest = { version = "0.12", default-features = false }
+
 [build-dependencies]
 build-utils = { path = "../build-utils" }
