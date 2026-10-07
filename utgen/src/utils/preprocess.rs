@@ -1,4 +1,5 @@
-use std::{fs, io, ops::Range, path::Path};
+use cargo_metadata::MetadataCommand;
+use std::{collections::BTreeSet, fs, io, ops::Range, path::Path};
 use syn::{Meta, Token, punctuated::Punctuated, spanned::Spanned, visit::Visit};
 use walkdir::WalkDir;
 
@@ -26,6 +27,28 @@ pub fn comment_out_tests(dir: &Path) -> io::Result<()> {
     if !src.is_dir() {
         return Ok(());
     }
+    let src = src.canonicalize()?;
+    // A Cargo entry must be a complete file. Non-entry expression fragments
+    // used by include! can be left alone. Directory-only preprocessing remains
+    // usable without requiring a manifest.
+    let roots: BTreeSet<_> = if dir.join("Cargo.toml").is_file() {
+        MetadataCommand::new()
+            .manifest_path(dir.join("Cargo.toml").canonicalize()?)
+            .current_dir(dir)
+            .no_deps()
+            .exec()
+            .map_err(io::Error::other)?
+            .packages
+            .into_iter()
+            .flat_map(|p| {
+                p.targets
+                    .into_iter()
+                    .map(|t| t.src_path.into_std_path_buf())
+            })
+            .collect()
+    } else {
+        BTreeSet::new()
+    };
     // Parse every file before writing any of them.
     let mut changes = Vec::new();
     for entry in WalkDir::new(src) {
@@ -33,7 +56,7 @@ pub fn comment_out_tests(dir: &Path) -> io::Result<()> {
         let path = entry.path();
         if entry.file_type().is_file() && path.extension().is_some_and(|e| e == "rs") {
             let original = fs::read_to_string(path)?;
-            let prepared = prepare_source(&original).map_err(|err| {
+            let prepared = prepare_source(&original, roots.contains(path)).map_err(|err| {
                 io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!("{}: {err}", path.display()),
@@ -86,7 +109,7 @@ fn without_tests(meta: &Meta) -> Option<bool> {
     }
 }
 
-fn is_test_module(attrs: &[syn::Attribute]) -> bool {
+pub(crate) fn is_test_only(attrs: &[syn::Attribute]) -> bool {
     attrs.iter().any(|attr| {
         attr.path().is_ident("cfg")
             && attr
@@ -96,6 +119,31 @@ fn is_test_module(attrs: &[syn::Attribute]) -> bool {
     })
 }
 
+pub(crate) fn is_test_function(attrs: &[syn::Attribute]) -> bool {
+    is_test_only(attrs)
+        || attrs
+            .iter()
+            .any(|a| a.path().segments.last().is_some_and(|s| s.ident == "test"))
+}
+
+/// Expression fragments are deliberately not rewritten or macro-expanded.
+pub(crate) fn parse_source(source: &str, crate_root: bool) -> syn::Result<Option<syn::File>> {
+    match syn::parse_file(source) {
+        Ok(file) => Ok(Some(file)),
+        Err(_) if !crate_root && syn::parse_str::<syn::Expr>(source).is_ok() => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+pub(crate) fn source_span_offset(source: &str, syntax: &syn::File) -> usize {
+    // syn strips BOM/shebang prefixes before tokenizing.
+    (if source.starts_with('\u{feff}') {
+        '\u{feff}'.len_utf8()
+    } else {
+        0
+    }) + syntax.shebang.as_ref().map_or(0, |s| s.len())
+}
+
 #[derive(Default)]
 struct TestRanges {
     ranges: Vec<Range<usize>>,
@@ -103,47 +151,53 @@ struct TestRanges {
 
 impl<'ast> Visit<'ast> for TestRanges {
     fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
-        if is_test_module(&item.attrs) {
+        if is_test_only(&item.attrs) {
             self.ranges.push(item.span().byte_range());
         } else {
             syn::visit::visit_item_mod(self, item);
         }
     }
     fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
-        if is_test_module(&item.attrs)
-            || item
-                .attrs
-                .iter()
-                .any(|a| a.path().segments.last().is_some_and(|s| s.ident == "test"))
-        {
+        if is_test_function(&item.attrs) {
             self.ranges.push(item.span().byte_range());
         } else {
             syn::visit::visit_item_fn(self, item);
         }
     }
+    fn visit_item_impl(&mut self, item: &'ast syn::ItemImpl) {
+        if is_test_only(&item.attrs) {
+            self.ranges.push(item.span().byte_range());
+        } else {
+            syn::visit::visit_item_impl(self, item);
+        }
+    }
+    fn visit_impl_item_fn(&mut self, item: &'ast syn::ImplItemFn) {
+        if is_test_function(&item.attrs) {
+            self.ranges.push(item.span().byte_range());
+        } else {
+            syn::visit::visit_impl_item_fn(self, item);
+        }
+    }
 }
 
-pub(crate) fn test_ranges(source: &str) -> syn::Result<Vec<Range<usize>>> {
-    let syntax = syn::parse_file(source)?;
-    // syn strips these prefixes before tokenizing; spans are relative to the
-    // remainder. Account for them when editing the original byte buffer.
-    let offset = if source.starts_with('\u{feff}') {
-        '\u{feff}'.len_utf8()
-    } else {
-        0
-    } + syntax.shebang.as_ref().map_or(0, |s| s.len());
+fn prepare_source(source: &str, crate_root: bool) -> syn::Result<String> {
+    let Some(syntax) = parse_source(source, crate_root)? else {
+        return Ok(source.to_owned());
+    };
+    let offset = source_span_offset(source, &syntax);
     let mut visitor = TestRanges::default();
-    visitor.visit_file(&syntax);
-    Ok(visitor
-        .ranges
-        .into_iter()
-        .map(|range| range.start + offset..range.end + offset)
-        .collect())
-}
-
-fn prepare_source(source: &str) -> syn::Result<String> {
+    let ranges = if is_test_only(&syntax.attrs) {
+        vec![offset..source.len()]
+    } else {
+        visitor.visit_file(&syntax);
+        visitor
+            .ranges
+            .into_iter()
+            .map(|r| r.start + offset..r.end + offset)
+            .collect()
+    };
     let mut bytes = source.as_bytes().to_vec();
-    for range in test_ranges(source)? {
+    for range in ranges {
         // Retain newlines and byte offsets, including CRLF and same-line items.
         // Byte ranges include full UTF-8 characters; spaces keep valid UTF-8.
         for byte in &mut bytes[range] {
@@ -162,19 +216,19 @@ mod tests {
     #[test]
     fn same_line_tests_do_not_move_production_code() {
         let source = "#[test] fn old() { let s = \"中文\"; } pub fn keep() -> u8 { 1 }\r\n";
-        let prepared = prepare_source(source).unwrap();
+        let prepared = prepare_source(source, false).unwrap();
         assert_eq!(prepared.len(), source.len());
         let position = source.find("pub fn keep").unwrap();
         assert_eq!(&prepared[position..], &source[position..]);
         assert!(prepared[..position].trim().is_empty());
         assert!(syn::parse_file(&prepared).is_ok());
-        assert_eq!(prepare_source(&prepared).unwrap(), prepared);
+        assert_eq!(prepare_source(&prepared, false).unwrap(), prepared);
     }
 
     #[test]
     fn nested_ranges_leave_following_items_intact() {
         let source = "#[cfg(test)] mod tests { #[test] fn a() {} mod nested { #[test] fn b() {} } } fn keep() {}\n#[tokio::test] async fn c() {}\nfn last() {}\n";
-        let prepared = prepare_source(source).unwrap();
+        let prepared = prepare_source(source, false).unwrap();
         assert_eq!(prepared.len(), source.len());
         let syntax = syn::parse_file(&prepared).unwrap();
         assert_eq!(syntax.items.len(), 2);
@@ -185,7 +239,7 @@ mod tests {
     #[test]
     fn cfg_predicates_do_not_erase_production_modules() {
         let source = "#[cfg(not(test))] mod normal { fn a() {} }\n#[cfg(feature = \"contest\")] mod feature { fn b() {} }\n#[cfg(any(test, feature = \"enabled\"))] mod shared { fn c() {} }\n#[cfg(all(test, feature = \"enabled\"))] mod tests { fn d() {} }\n";
-        let prepared = prepare_source(source).unwrap();
+        let prepared = prepare_source(source, false).unwrap();
         assert!(prepared.contains("mod normal"));
         assert!(prepared.contains("mod feature"));
         assert!(prepared.contains("mod shared"));
@@ -196,7 +250,32 @@ mod tests {
     #[test]
     fn files_without_tests_are_byte_identical() {
         let source = "// 中文\r\npub fn keep() {}\r\n";
-        assert_eq!(prepare_source(source).unwrap(), source);
+        assert_eq!(prepare_source(source, false).unwrap(), source);
+    }
+
+    #[test]
+    fn test_methods_and_impls_are_removed_without_moving_production() {
+        let source = "struct S;\nimpl S { #[cfg(test)] fn helper() {} fn keep() {} }\n#[cfg(test)] impl S { fn other() {} }\nfn last() {}\n";
+        let prepared = prepare_source(source, false).unwrap();
+        assert!(!prepared.contains("helper"));
+        assert!(!prepared.contains("other"));
+        assert_eq!(prepared.len(), source.len());
+        for name in ["fn keep", "fn last"] {
+            assert_eq!(prepared.find(name), source.find(name));
+        }
+        syn::parse_file(&prepared).unwrap();
+    }
+
+    #[test]
+    fn file_level_tests_are_blanked_and_expression_fragments_preserved() {
+        let source = "#![cfg(test)]\r\nfn helper() {}\r\n#[test] fn checks() {}\r\n";
+        let prepared = prepare_source(source, false).unwrap();
+        assert!(prepared.trim().is_empty());
+        assert_eq!(prepared.len(), source.len());
+        assert_eq!(prepared.matches("\r\n").count(), 3);
+        assert_eq!(prepare_source("42\n", false).unwrap(), "42\n");
+        assert!(prepare_source("42\n", true).is_err());
+        assert!(prepare_source("fn broken( {", false).is_err());
     }
 
     #[test]
@@ -207,7 +286,7 @@ mod tests {
             "\u{feff}#!/usr/bin/env rust-script\n",
         ] {
             let source = format!("{prefix}#[test] fn old() {{}} fn keep() {{}}\n");
-            let prepared = prepare_source(&source).unwrap();
+            let prepared = prepare_source(&source, false).unwrap();
             assert!(prepared.starts_with(prefix));
             let position = source.find("fn keep").unwrap();
             assert_eq!(&source[position..], &prepared[position..]);
