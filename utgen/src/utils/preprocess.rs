@@ -110,10 +110,11 @@ impl<'ast> Visit<'ast> for TestRanges {
         }
     }
     fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
-        if item
-            .attrs
-            .iter()
-            .any(|a| a.path().segments.last().is_some_and(|s| s.ident == "test"))
+        if is_test_module(&item.attrs)
+            || item
+                .attrs
+                .iter()
+                .any(|a| a.path().segments.last().is_some_and(|s| s.ident == "test"))
         {
             self.ranges.push(item.span().byte_range());
         } else {
@@ -122,7 +123,7 @@ impl<'ast> Visit<'ast> for TestRanges {
     }
 }
 
-fn prepare_source(source: &str) -> syn::Result<String> {
+pub(crate) fn test_ranges(source: &str) -> syn::Result<Vec<Range<usize>>> {
     let syntax = syn::parse_file(source)?;
     // syn strips these prefixes before tokenizing; spans are relative to the
     // remainder. Account for them when editing the original byte buffer.
@@ -133,11 +134,19 @@ fn prepare_source(source: &str) -> syn::Result<String> {
     } + syntax.shebang.as_ref().map_or(0, |s| s.len());
     let mut visitor = TestRanges::default();
     visitor.visit_file(&syntax);
+    Ok(visitor
+        .ranges
+        .into_iter()
+        .map(|range| range.start + offset..range.end + offset)
+        .collect())
+}
+
+fn prepare_source(source: &str) -> syn::Result<String> {
     let mut bytes = source.as_bytes().to_vec();
-    for range in visitor.ranges {
+    for range in test_ranges(source)? {
         // Retain newlines and byte offsets, including CRLF and same-line items.
         // Byte ranges include full UTF-8 characters; spaces keep valid UTF-8.
-        for byte in &mut bytes[range.start + offset..range.end + offset] {
+        for byte in &mut bytes[range] {
             if *byte != b'\n' && *byte != b'\r' {
                 *byte = b' ';
             }

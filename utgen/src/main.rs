@@ -3,7 +3,7 @@ use log::info;
 use simplelog::{ColorChoice, ConfigBuilder, LevelFilter, TermLogger, TerminalMode};
 use std::env;
 use std::path::PathBuf;
-use utgen::{LLM, LlmConfig, analyze_project, validate_repair};
+use utgen::{LLM, LlmConfig, analyze_project, collect_coverage, validate_repair};
 use utgen::{comment_out_tests, gen_test_rate, gen_tests_project, llm_fix, rename_tests_to_bak};
 
 /// Generate unit tests for a project
@@ -27,6 +27,12 @@ enum Command {
     Analyze {
         #[command(flatten)]
         options: Opts,
+    },
+    /// Run existing tests once and export coverage excluding test code (no model needed)
+    Coverage {
+        /// Standalone crate working copy
+        #[arg(short, long)]
+        project_dir: PathBuf,
     },
     /// Generate and run tests for the project to collect coverage data
     Gen {
@@ -144,6 +150,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 analyze_project(work_dir)?;
             }
+        }
+        Command::Coverage { project_dir } => {
+            let output = collect_coverage(&project_dir.canonicalize()?, true)?;
+            use std::io::Write;
+            std::io::stdout().write_all(&output.stdout)?;
+            std::io::stderr().write_all(&output.stderr)?;
         }
         // generate unit tests
         Command::Gen {

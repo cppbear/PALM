@@ -2,8 +2,15 @@ mod support;
 
 #[cfg(test)]
 mod tests {
+    fn record_run() {
+        if let Ok(path) = std::env::var("PALM_FIXTURE_RUN_LOG") {
+            use std::io::Write;
+            std::fs::OpenOptions::new().create(true).append(true).open(path).unwrap()
+                .write_all(b"x").unwrap();
+        }
+    }
     #[test]
-    fn existing_unit_test() { assert_eq!(super::classify(2), 1); }
+    fn existing_unit_test() { record_run(); assert_eq!(super::classify(2), 1); }
 }
 
 pub struct Gauge {
