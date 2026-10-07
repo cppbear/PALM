@@ -48,7 +48,7 @@ fn help_and_non_model_commands_do_not_load_configuration() {
         vec!["--help"],
         vec!["gen", "--help"],
         vec!["fix", "--help"],
-        vec!["analyze", "-p", "."],
+        vec!["analyze", "--help"],
         vec!["pre-process", "-p", "."],
     ] {
         let output = fixture
@@ -63,6 +63,119 @@ fn help_and_non_model_commands_do_not_load_configuration() {
             String::from_utf8_lossy(&output.stderr)
         );
     }
+}
+
+#[test]
+fn analyze_validates_the_crate_without_loading_model_configuration() {
+    let fixture = Fixture::new();
+    let output = fixture
+        .command()
+        .args(["analyze", "-p", "."])
+        .env("PALM_CONFIG", "missing.json")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains("Analysis requires a crate"), "{error}");
+    assert!(!error.contains("model configuration"));
+}
+
+#[test]
+fn missing_analysis_does_not_modify_the_manifest() {
+    let fixture = Fixture::new();
+    let before = fs::read(fixture.0.join("Cargo.toml")).unwrap();
+    for command in ["gen", "fix"] {
+        let output = fixture
+            .command()
+            .args([command, "-p", "."])
+            .env("PALM_API_BASE", "http://127.0.0.1:9/v1")
+            .env("PALM_API_KEY", "unused")
+            .env("PALM_MODEL", "unused")
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("name_map.json"));
+        assert_eq!(before, fs::read(fixture.0.join("Cargo.toml")).unwrap());
+    }
+}
+
+#[test]
+fn preprocessing_only_changes_the_selected_crate() {
+    let fixture = Fixture::new();
+    for name in ["selected", "untouched"] {
+        fs::create_dir_all(fixture.0.join(name).join("src")).unwrap();
+        fs::create_dir_all(fixture.0.join(name).join("tests")).unwrap();
+        fs::write(
+            fixture.0.join(name).join("src/lib.rs"),
+            "#[test] fn old() {} fn keep() {}\n",
+        )
+        .unwrap();
+    }
+    let output = fixture
+        .command()
+        .args(["pre-process", "-p", ".", "-w", "selected"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(fixture.0.join("selected/tests.bak").is_dir());
+    assert!(!fixture.0.join("selected/tests").exists());
+    assert!(fixture.0.join("untouched/tests").is_dir());
+    assert_eq!(
+        fs::read_to_string(fixture.0.join("untouched/src/lib.rs")).unwrap(),
+        "#[test] fn old() {} fn keep() {}\n"
+    );
+}
+
+#[test]
+fn preprocessing_refuses_to_overwrite_an_existing_backup() {
+    let fixture = Fixture::new();
+    fs::create_dir_all(fixture.0.join("src")).unwrap();
+    fs::create_dir(fixture.0.join("tests")).unwrap();
+    fs::create_dir(fixture.0.join("tests.bak")).unwrap();
+    fs::write(fixture.0.join("src/lib.rs"), "#[test] fn old() {}\n").unwrap();
+    let output = fixture
+        .command()
+        .args(["pre-process", "-p", "."])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("tests.bak already exists"));
+    assert_eq!(
+        fs::read_to_string(fixture.0.join("src/lib.rs")).unwrap(),
+        "#[test] fn old() {}\n"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn analysis_stops_after_a_failed_tool_command() {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = Fixture::new();
+    fs::create_dir(fixture.0.join("src")).unwrap();
+    fs::create_dir(fixture.0.join("bin")).unwrap();
+    let cargo = fixture.0.join("bin/cargo");
+    fs::write(
+        &cargo,
+        "#!/bin/sh\necho fixture-cargo-failure >&2\nexit 42\n",
+    )
+    .unwrap();
+    fs::set_permissions(&cargo, fs::Permissions::from_mode(0o755)).unwrap();
+    let output = fixture
+        .command()
+        .args(["analyze", "-p", "."])
+        .env("PATH", fixture.0.join("bin"))
+        .output()
+        .unwrap();
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert_eq!(error.matches("fixture-cargo-failure").count(), 1, "{error}");
+    assert!(error.contains("42"), "{error}");
+    assert!(!fixture.0.join("brinfo").exists());
+    assert!(!fixture.0.join("focxt").exists());
 }
 
 #[test]

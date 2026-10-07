@@ -6,13 +6,14 @@ mod test_ext;
 
 use crate::run::add_ntest_dependency;
 use crate::types::{BrData, RfocxtNameInformation, TestGenInfo};
+use crate::validate_analysis;
 use cot::{gen_input_range, gen_oracle, gen_prefix, gen_test};
 use generation::{check_integration, check_unit, generation_tests};
 use log::{error, info, warn};
-use prompt::{inputprompts, oracleprompts, prefixprompts, testprompts, Prompt};
+use prompt::{Prompt, inputprompts, oracleprompts, prefixprompts, testprompts};
 use std::collections::HashMap;
-use std::fs;
 use std::path::Path;
+use std::{fs, io};
 use test_ext::{extract_test_functions, try_parse};
 use tokio::sync::mpsc;
 
@@ -30,7 +31,8 @@ async fn generation_task(
     context: bool,
     oracle: bool,
     tx: mpsc::Sender<TestGenInfo>,
-) {
+) -> io::Result<()> {
+    let name = brdata.name.clone();
     info!("Generating tests for {}", brdata.name);
     let test_gen_info = generation_tests(
         &llm,
@@ -45,9 +47,12 @@ async fn generation_task(
         oracle,
     )
     .await;
-    if let Some(test_gen_info) = test_gen_info {
-        tx.send(test_gen_info).await.unwrap();
-    }
+    let test_gen_info =
+        test_gen_info.ok_or_else(|| io::Error::other(format!("Generation failed for {name}")))?;
+    tx.send(test_gen_info)
+        .await
+        .map_err(|_| io::Error::other("Generation result channel closed"))?;
+    Ok(())
 }
 
 pub async fn gen_tests_project(
@@ -59,23 +64,15 @@ pub async fn gen_tests_project(
     requirement: bool,
     context: bool,
     oracle: bool,
-) {
+) -> io::Result<()> {
+    validate_analysis(project_dir, work_dir)?;
+    if tasks == 0 {
+        return Err(io::Error::other("--tasks must be greater than zero"));
+    }
     add_ntest_dependency(work_dir);
     let brdata_dir = work_dir.join("brinfo/brdata");
     let map_path = work_dir.join("brinfo/name_map.json");
     let focxt_name_informations_path = work_dir.join("focxt/impl_informations.json");
-    if !map_path.exists() {
-        error!("{} does not exist", map_path.display());
-        return;
-    }
-    if !brdata_dir.exists() {
-        error!("{} does not exist", brdata_dir.display());
-        return;
-    }
-    if !focxt_name_informations_path.exists() {
-        error!("{} does not exist", focxt_name_informations_path.display());
-        return;
-    }
     if brdata_dir.is_dir() {
         let nmap: HashMap<String, String> =
             serde_json::from_str(&fs::read_to_string(&map_path).unwrap()).unwrap();
@@ -83,6 +80,7 @@ pub async fn gen_tests_project(
             serde_json::from_str(&fs::read_to_string(&focxt_name_informations_path).unwrap())
                 .unwrap();
         let (tx, mut rx) = mpsc::channel(tasks);
+        let mut handles = Vec::new();
         for entry in fs::read_dir(brdata_dir).unwrap() {
             let entry = entry.unwrap();
             let brdata_path = entry.path();
@@ -120,7 +118,7 @@ pub async fn gen_tests_project(
                 let project_dir = project_dir.to_path_buf();
                 let work_dir = work_dir.to_path_buf();
                 let llm = llm.clone();
-                tokio::spawn(async move {
+                handles.push(tokio::spawn(async move {
                     generation_task(
                         llm,
                         brdata,
@@ -134,8 +132,8 @@ pub async fn gen_tests_project(
                         oracle,
                         tx,
                     )
-                    .await;
-                });
+                    .await
+                }));
             }
         }
         drop(tx);
@@ -153,7 +151,16 @@ pub async fn gen_tests_project(
             ));
             test_gen_info.dump_json(&file_path);
         }
+        for handle in handles {
+            handle
+                .await
+                .map_err(|e| io::Error::other(format!("Generation task failed: {e}")))??;
+        }
     } else {
-        error!("{} is not a directory", brdata_dir.display());
+        return Err(io::Error::other(format!(
+            "{} is not a directory",
+            brdata_dir.display()
+        )));
     }
+    Ok(())
 }

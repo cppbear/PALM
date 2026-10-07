@@ -508,37 +508,33 @@ fn get_syntax(
 
 fn get_syntax_recursively(
     output_path: &PathBuf,
+    impl_informations: &[ImplInformation],
     data: &CallsAndTypes,
     syntax_context: &mut SyntaxContext,
     fns: &HashMap<String, FnData>,
     structs: &HashMap<String, StructData>,
 ) {
     let mut remain_calls = data.calls.clone();
-    let mut already_calls: HashSet<String> = HashSet::new();
-    let mut end_data: CallsAndTypes = CallsAndTypes::new_empty();
-    while remain_calls.len() > 0 {
-        let call = remain_calls.pop();
-        if let Some(call) = call {
-            already_calls.insert(call.clone());
-            let call_file = output_path.join(String::from("new_callsandtypes/") + &call + ".json");
-            // println!("{}", call_file.to_string_lossy());
-            let mut file = File::open(call_file);
-            match file {
-                Ok(mut file) => {
-                    let mut contents = String::new();
-                    file.read_to_string(&mut contents).unwrap();
-                    let new_data: CallsAndTypes = serde_json::from_str(&contents).unwrap();
-                    end_data.add_data(&new_data);
-                    for new_call in new_data.calls.iter() {
-                        if !already_calls.contains(new_call) {
-                            remain_calls.push(new_call.clone());
-                        }
-                    }
-                }
-                Err(_) => {}
-            }
+    let mut already_calls = HashSet::new();
+    let mut end_data = data.clone();
+    while let Some(call) = remain_calls.pop() {
+        if !already_calls.insert(call.clone()) { continue; }
+        // Calls contain full names; files are named by the compiler's encoding.
+        let Some(info) = impl_informations.iter().find(|info| info.full_name == call) else {
+            continue; // External functions do not have local context artifacts.
+        };
+        let call_file = output_path.join("new_callsandtypes").join(format!("{}.json", info.encoded_name));
+        if let Ok(file) = File::open(call_file) {
+            let new_data: CallsAndTypes = serde_json::from_reader(file).unwrap();
+            remain_calls.extend(new_data.calls.iter().filter(|name| !already_calls.contains(*name)).cloned());
+            end_data.add_data(&new_data);
         }
     }
+    end_data.calls.sort();
+    end_data.calls.dedup();
+    end_data.types.sort();
+    end_data.types.dedup();
+    let data = &end_data;
     for call in data.calls.iter() {
         let fn_data = fns.get(call);
         if let Some(fn_data) = fn_data {
@@ -2095,6 +2091,7 @@ impl SyntaxContext {
                         get_syntax(&data, &mut syntax_context, fns, structs);
                         get_syntax_recursively(
                             output_path,
+                            impl_informations,
                             &data,
                             &mut syntax_context,
                             fns,
@@ -2183,6 +2180,7 @@ impl SyntaxContext {
                             get_syntax(&data, &mut syntax_context, fns, structs);
                             get_syntax_recursively(
                                 output_path,
+                                impl_informations,
                                 &data,
                                 &mut syntax_context,
                                 fns,
@@ -2244,6 +2242,7 @@ impl SyntaxContext {
                             get_syntax(&data, &mut syntax_context, fns, structs);
                             get_syntax_recursively(
                                 output_path,
+                                impl_informations,
                                 &data,
                                 &mut syntax_context,
                                 fns,
