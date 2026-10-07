@@ -1,167 +1,208 @@
-use std::fs::{self, File};
-use std::io::{self, Read, Write};
-use std::path::Path;
-use syn::spanned::Spanned;
-use syn::visit::Visit;
-// use syn::Attribute;
+use std::{fs, io, ops::Range, path::Path};
+use syn::{Meta, Token, punctuated::Punctuated, spanned::Spanned, visit::Visit};
 use walkdir::WalkDir;
 
-pub fn rename_tests_to_bak(dir: &Path) -> std::io::Result<()> {
-    for entry in WalkDir::new(dir).into_iter().filter_map(Result::ok) {
-        let path = entry.path();
-        if path.is_dir() && path.file_name().unwrap() == "tests" {
-            let new_name = path.with_file_name("tests.bak");
-            fs::rename(path, new_name)?;
+/// Only the selected crate's integration-test directory is renamed.
+pub fn rename_tests_to_bak(dir: &Path) -> io::Result<()> {
+    let tests = dir.join("tests");
+    let backup = dir.join("tests.bak");
+    if tests.exists() {
+        if backup.exists() {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                format!(
+                    "{} already exists; use a fresh working copy",
+                    backup.display()
+                ),
+            ));
         }
+        fs::rename(tests, backup)?;
     }
     Ok(())
 }
 
 pub fn comment_out_tests(dir: &Path) -> io::Result<()> {
-    for entry in WalkDir::new(dir).into_iter().filter_map(Result::ok) {
+    let src = dir.join("src");
+    if !src.is_dir() {
+        return Ok(());
+    }
+    // Parse every file before writing any of them.
+    let mut changes = Vec::new();
+    for entry in WalkDir::new(src) {
+        let entry = entry.map_err(io::Error::other)?;
         let path = entry.path();
-        if path.is_file()
-            && path.extension().and_then(|s| s.to_str()) == Some("rs")
-            && path
-                .strip_prefix(dir)
-                .unwrap()
-                .components()
-                .next()
-                .map(|c| c.as_os_str())
-                == Some("src".as_ref())
-        {
-            comment_out_tests_in_file(path)?;
+        if entry.file_type().is_file() && path.extension().is_some_and(|e| e == "rs") {
+            let original = fs::read_to_string(path)?;
+            let prepared = prepare_source(&original).map_err(|err| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("{}: {err}", path.display()),
+                )
+            })?;
+            if prepared != original {
+                changes.push((path.to_owned(), prepared));
+            }
         }
     }
+    for (path, prepared) in changes {
+        fs::write(path, prepared)?;
+    }
     Ok(())
+}
+
+// Evaluate only what is known with cfg(test) disabled. Unknown feature/target
+// predicates stay unknown, so a production module is never removed on a guess.
+fn without_tests(meta: &Meta) -> Option<bool> {
+    match meta {
+        Meta::Path(path) if path.is_ident("test") => Some(false),
+        Meta::List(list) => {
+            let args = list
+                .parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
+                .ok()?;
+            let values: Vec<_> = args.iter().map(without_tests).collect();
+            if list.path.is_ident("not") && values.len() == 1 {
+                values[0].map(|v| !v)
+            } else if list.path.is_ident("all") {
+                if values.contains(&Some(false)) {
+                    Some(false)
+                } else if values.iter().all(|v| *v == Some(true)) {
+                    Some(true)
+                } else {
+                    None
+                }
+            } else if list.path.is_ident("any") {
+                if values.contains(&Some(true)) {
+                    Some(true)
+                } else if values.iter().all(|v| *v == Some(false)) {
+                    Some(false)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
 }
 
 fn is_test_module(attrs: &[syn::Attribute]) -> bool {
     attrs.iter().any(|attr| {
         attr.path().is_ident("cfg")
             && attr
-                .meta
-                .require_list()
-                .is_ok_and(|list| list.tokens.to_string().contains("test"))
+                .parse_args::<Meta>()
+                .ok()
+                .is_some_and(|meta| without_tests(&meta) == Some(false))
     })
 }
 
-struct TestCommenter {
-    mods_pos: Vec<(usize, usize, usize, usize)>,
-    functions_pos: Vec<(usize, usize, usize, usize)>,
+#[derive(Default)]
+struct TestRanges {
+    ranges: Vec<Range<usize>>,
 }
 
-impl TestCommenter {
-    fn new() -> Self {
-        Self {
-            mods_pos: Vec::new(),
-            functions_pos: Vec::new(),
-        }
-    }
-}
-fn is_test_like_attr(attr: &syn::Attribute) -> bool {
-    let path = attr.path();
-
-    path.is_ident("test")
-        || path.segments.last().is_some_and(|seg| seg.ident == "test")
-}
-impl<'ast> Visit<'ast> for TestCommenter {
-    fn visit_item_mod(&mut self, i: &'ast syn::ItemMod) {
-        if is_test_module(&i.attrs) {
-            let span = i.span();
-            self.mods_pos.push((
-                span.start().line,
-                span.start().column,
-                span.end().line,
-                span.end().column,
-            ));
-        }
-        syn::visit::visit_item_mod(self, i);
-    }
-
-    fn visit_item_fn(&mut self, i: &'ast syn::ItemFn) {
-        if i.attrs.iter().any(is_test_like_attr) {
-            let span = i.span();
-            self.functions_pos.push((
-                span.start().line,
-                span.start().column,
-                span.end().line,
-                span.end().column,
-            ));
-        }
-        syn::visit::visit_item_fn(self, i);
-    }
-}
-
-fn comment_out_tests_in_file(file_path: &Path) -> io::Result<()> {
-    let mut file = File::open(file_path)?;
-    let mut src = String::new();
-    file.read_to_string(&mut src)?;
-
-    let syntax = syn::parse_file(&src).expect("Failed to parse file");
-    let mut commenter = TestCommenter::new();
-    commenter.visit_file(&syntax);
-
-    let mut lines: Vec<String> = src.lines().map(|s| s.to_string()).collect();
-    for (start_line, start_col, end_line, end_col) in commenter.functions_pos.into_iter().rev().chain(commenter.mods_pos.into_iter()) {
-        if start_line == end_line {
-            let line = &mut lines[start_line - 1];
-            let (before, target, after) = (
-                &line[..start_col],
-                &line[start_col..end_col],
-                &line[end_col..],
-            );
-            if after.trim_start().is_empty() {
-                *line = format!("{}// {}", before, target);
-            } else {
-                let indent = before
-                    .chars()
-                    .take_while(|&c| c.is_whitespace())
-                    .collect::<String>();
-                let new_line = format!("{}// {}", before, target);
-                let moved_line = format!("{}{}", indent, after.trim_start());
-                *line = new_line;
-                lines.insert(start_line, moved_line);
-            }
+impl<'ast> Visit<'ast> for TestRanges {
+    fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
+        if is_test_module(&item.attrs) {
+            self.ranges.push(item.span().byte_range());
         } else {
-            let end_line_content = &mut lines[end_line - 1];
-            let (target, after) = end_line_content.split_at_mut(end_col);
-            if !after.trim_start().is_empty() {
-                let indent = " ".repeat(end_col - 1);
-                let moved_line = format!("{}{}", indent, after.trim_start());
-                *end_line_content = format!("// {}", target);
-                lines.insert(end_line, moved_line);
-            } else {
-                *end_line_content = format!("// {}", target);
-            }
+            syn::visit::visit_item_mod(self, item);
+        }
+    }
+    fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
+        if item
+            .attrs
+            .iter()
+            .any(|a| a.path().segments.last().is_some_and(|s| s.ident == "test"))
+        {
+            self.ranges.push(item.span().byte_range());
+        } else {
+            syn::visit::visit_item_fn(self, item);
+        }
+    }
+}
 
-            for line_index in start_line..end_line - 1 {
-                let line_content = &mut lines[line_index];
-                if !line_content.trim().is_empty() {
-                    *line_content = format!("// {}", line_content);
-                }
-            }
-
-            let start_line_content = &mut lines[start_line - 1];
-            let (before, target) = start_line_content.split_at_mut(start_col);
-            if !before.trim_end().is_empty() {
-                let indent = before
-                    .chars()
-                    .rev()
-                    .take_while(|&c| c.is_whitespace())
-                    .collect::<String>();
-                let moved_line = format!("// {}{}", indent, target.trim_start());
-                *start_line_content = format!("{}", before.trim_end());
-                lines.insert(start_line, moved_line);
-            } else {
-                *start_line_content = format!("{}// {}", before, target);
+fn prepare_source(source: &str) -> syn::Result<String> {
+    let syntax = syn::parse_file(source)?;
+    // syn strips these prefixes before tokenizing; spans are relative to the
+    // remainder. Account for them when editing the original byte buffer.
+    let offset = if source.starts_with('\u{feff}') {
+        '\u{feff}'.len_utf8()
+    } else {
+        0
+    } + syntax.shebang.as_ref().map_or(0, |s| s.len());
+    let mut visitor = TestRanges::default();
+    visitor.visit_file(&syntax);
+    let mut bytes = source.as_bytes().to_vec();
+    for range in visitor.ranges {
+        // Retain newlines and byte offsets, including CRLF and same-line items.
+        // Byte ranges include full UTF-8 characters; spaces keep valid UTF-8.
+        for byte in &mut bytes[range.start + offset..range.end + offset] {
+            if *byte != b'\n' && *byte != b'\r' {
+                *byte = b' ';
             }
         }
     }
+    Ok(String::from_utf8(bytes).expect("test ranges end on UTF-8 boundaries"))
+}
 
-    let modified_code = lines.join("\n");
-    let mut file = File::create(file_path)?;
-    file.write_all(modified_code.as_bytes())?;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    Ok(())
+    #[test]
+    fn same_line_tests_do_not_move_production_code() {
+        let source = "#[test] fn old() { let s = \"中文\"; } pub fn keep() -> u8 { 1 }\r\n";
+        let prepared = prepare_source(source).unwrap();
+        assert_eq!(prepared.len(), source.len());
+        let position = source.find("pub fn keep").unwrap();
+        assert_eq!(&prepared[position..], &source[position..]);
+        assert!(prepared[..position].trim().is_empty());
+        assert!(syn::parse_file(&prepared).is_ok());
+        assert_eq!(prepare_source(&prepared).unwrap(), prepared);
+    }
+
+    #[test]
+    fn nested_ranges_leave_following_items_intact() {
+        let source = "#[cfg(test)] mod tests { #[test] fn a() {} mod nested { #[test] fn b() {} } } fn keep() {}\n#[tokio::test] async fn c() {}\nfn last() {}\n";
+        let prepared = prepare_source(source).unwrap();
+        assert_eq!(prepared.len(), source.len());
+        let syntax = syn::parse_file(&prepared).unwrap();
+        assert_eq!(syntax.items.len(), 2);
+        assert!(prepared.contains("fn keep() {}"));
+        assert!(prepared.contains("fn last() {}"));
+    }
+
+    #[test]
+    fn cfg_predicates_do_not_erase_production_modules() {
+        let source = "#[cfg(not(test))] mod normal { fn a() {} }\n#[cfg(feature = \"contest\")] mod feature { fn b() {} }\n#[cfg(any(test, feature = \"enabled\"))] mod shared { fn c() {} }\n#[cfg(all(test, feature = \"enabled\"))] mod tests { fn d() {} }\n";
+        let prepared = prepare_source(source).unwrap();
+        assert!(prepared.contains("mod normal"));
+        assert!(prepared.contains("mod feature"));
+        assert!(prepared.contains("mod shared"));
+        assert!(!prepared.contains("mod tests"));
+        assert_eq!(source.lines().count(), prepared.lines().count());
+    }
+
+    #[test]
+    fn files_without_tests_are_byte_identical() {
+        let source = "// 中文\r\npub fn keep() {}\r\n";
+        assert_eq!(prepare_source(source).unwrap(), source);
+    }
+
+    #[test]
+    fn bom_and_shebang_do_not_shift_ranges() {
+        for prefix in [
+            "\u{feff}",
+            "#!/usr/bin/env rust-script\n",
+            "\u{feff}#!/usr/bin/env rust-script\n",
+        ] {
+            let source = format!("{prefix}#[test] fn old() {{}} fn keep() {{}}\n");
+            let prepared = prepare_source(&source).unwrap();
+            assert!(prepared.starts_with(prefix));
+            let position = source.find("fn keep").unwrap();
+            assert_eq!(&source[position..], &prepared[position..]);
+            assert_eq!(syn::parse_file(&prepared).unwrap().items.len(), 1);
+        }
+    }
 }
