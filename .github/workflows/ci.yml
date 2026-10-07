@@ -38,5 +38,7 @@ jobs:
         run: cargo metadata --manifest-path examples/bytes/Cargo.toml --no-deps --format-version 1 > /dev/null
       - name: Install the validated coverage tool
         run: cargo +stable install cargo-llvm-cov --version 0.6.16 --locked
+      - name: Check coverage annotation compatibility
+        run: python3 scripts/check_coverage.py
       - name: Validate the minimal analysis and test pipeline
         run: python3 scripts/check_minimal.py

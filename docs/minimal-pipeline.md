@@ -9,6 +9,7 @@ From the repository root:
 ```sh
 cargo build --workspace --locked
 cargo +stable install cargo-llvm-cov --version 0.6.16 --locked
+python3 scripts/check_coverage.py
 python3 scripts/check_minimal.py
 ```
 
@@ -49,3 +50,9 @@ Recursive context lookup now resolves full function names through the compiler's
 The local macOS/Apple Silicon run passed using six generation responses and one repair response. Real-model behavior, bytes-scale execution, general multi-crate support, request concurrency limits, hard process timeouts, recovery after forced termination, and explicit run/resume behavior remain later work. Git history is retained.
 
 The coverage entry temporarily annotates sources with `#[coverage(off)]` and enables the nightly feature at crate roots without adding newlines. It preserves compiler flags, restores original bytes on returned errors, and performs no hashing or source fingerprint checks. `cargo llvm-cov report --json` reuses the first run's data; the first XML-producing command retains the tool's normal profile cleanup between candidates. This does not provide crash recovery or general macro expansion. See the [coverage command reference](../utgen/README.md#coverage-of-existing-tests) for scope.
+
+## Coverage Compatibility Regression
+
+`scripts/check_coverage.py` exercises 11 small standalone crates, without a model service or extra crate dependencies. It covers existing coverage attributes, `cfg_attr(test, ...)`, compound/nested conditions with Cargo features enabled and disabled, test-only methods and impls, file-level test modules, and an expression used by `include!`. Each case has an integration test so both normal-library and test-harness builds are checked. It compares execution outcomes, checks raw production-only coverage, verifies source restoration, and confirms preprocessing leaves no original tests while preserving byte offsets. A custom target entry containing an expression is rejected by both commands.
+
+The script runs in Linux CI. Coverage and preprocessing share only source parsing and test predicates; they keep separate edit visitors. Coverage attributes and their feature gate are added under the complement of existing conditions, without a cfg evaluator or compiler-flag overrides. Explicit `coverage(on)` remains an intentional opt-in. Expression fragments are preserved, without macro expansion or automatic test exclusion inside those fragments.
