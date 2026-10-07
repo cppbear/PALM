@@ -1,0 +1,5 @@
+{
+  "base": "https://your-model-service.example/v1",
+  "key": "replace-with-your-api-key",
+  "model": "replace-with-your-model"
+}

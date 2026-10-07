@@ -1,0 +1,38 @@
+name: Build and test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned compiler and components
+        run: rustup toolchain install nightly-2025-03-19 --profile minimal --component rust-src --component rustc-dev --component llvm-tools-preview
+      - name: Build without model configuration
+        run: |
+          test ! -e utgen/res/api.json
+          cargo build --workspace --locked
+      - name: Run tests without a model service
+        run: cargo test --workspace --locked
+      - name: Check the installer and CLI entry points
+        run: |
+          bash -n install.sh
+          ./install.sh --help
+          ./target/debug/cargo-brinfo --help
+          ./target/debug/cargo-call-chain --help
+          ./target/debug/focxt --help
+          ./target/debug/utgen --help
+      - name: Check the standalone example workspace
+        run: cargo metadata --manifest-path examples/bytes/Cargo.toml --no-deps --format-version 1 > /dev/null
