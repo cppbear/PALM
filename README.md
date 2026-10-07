@@ -33,6 +33,7 @@ PALM combines program analysis with LLMs to generate Rust tests, repair compilat
 | `build-utils/` | Configure the compiler library search path during builds. |
 | [examples](examples/README.md) | The bundled bytes target and usage instructions. |
 | `docker/` | Container build and run scripts. |
+| [docs](docs/README.md) | Technical guide, ASE 2025 materials, and source integration notes. |
 
 ## Installation
 
@@ -68,3 +69,9 @@ Run `cargo brinfo` in the target crate, then run `focxt -c <target-crate-path>` 
 Use `utgen pre-process`, `utgen gen`, and `utgen fix` for preprocessing, generation, and compilation repair. Pass `--requirement --context` to `utgen gen` to include path constraints and focal context. Preprocessing and test checks modify the target tree; use a working copy of the target project.
 
 See the [bytes example](examples/README.md) and [utgen usage](utgen/README.md) for the commands and result locations.
+
+## Documentation
+
+- [Technical guide in Chinese](docs/palm-rust-unit-test-generation.md): architecture, data flow, and usage.
+- [ASE 2025 materials](docs/ase2025/README.md): the original poster and presentation.
+- [Source integration notes](docs/source-integration.md): source repositories, revisions, and branch decisions.

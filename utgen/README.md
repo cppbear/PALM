@@ -1,128 +1,109 @@
 # utgen
 
-This tool is used to generate unit tests, run them, and collect related data.
+utgen generates Rust tests from condition chains and focal context, checks compilation, repairs compilation errors, and collects coverage and execution statistics.
 
 ## Prerequisites
 
-Create a file named `api.json` in the `res` folder with the following content:
+Create `utgen/res/api.json` from the repository root, or `res/api.json` from this directory:
 
 ```json
 {
-    "base": "https://xxxx/v1",
-    "key": "sk-xxxxxxxxxx",
-    "model": "xxx"
+  "base": "https://xxxx/v1",
+  "key": "sk-xxxxxxxxxx",
+  "model": "xxx"
 }
 ```
 
+Replace the placeholders with your LLM service configuration. The file is ignored by Git and embedded into the binary with `include_str!`; changing the address, key, or model requires rebuilding utgen. No API configuration is included in the repository.
+
+Install the toolchain and coverage tool described in the [project README](../README.md#prerequisites). Before generation, run `cargo brinfo` in the target crate and `focxt -c <target-crate-path>` to produce:
+
+```text
+brinfo/name_map.json
+brinfo/brdata/*.json
+focxt/impl_informations.json
+focxt/<encoded>.rs
+```
+
+These files are required even when `--context` is omitted: that flag controls whether context is included in the prompt.
+
 ## Build
 
-To build utgen, run `cargo build` in the `utgen` directory.
-
-## Usage
-
-`utgen --help`：
-
-```
-Generate unit tests for a project
-
-Usage: utgen <COMMAND>
-
-Commands:
-  pre-process  Preprocess the project, including renaming integration tests and commenting out unit tests
-  gen          Generate and run tests for the project to collect coverage data
-  fix          Fix and run tests for the project to collect coverage data
-  help         Print this message or the help of the given subcommand(s)
-
-Options:
-  -h, --help  Print help
-```
-
-### Workflow
-
-The main commands used are `pre-process`, `gen`, and `fix`. The workflow is to first run `utgen pre-process` for preprocessing, then run `utgen gen` to generate tests and collect data before fixes, and finally run `utgen fix` to fix the tests and collect data. The parameters for each command are explained below:
-
-### pre-process
+From the repository root:
 
 ```sh
-utgen pre-process --help
+cargo build -p utgen
+cargo install --path utgen --locked
 ```
 
-The output is as follows:
+## Commands
 
-```
-Preprocess the project, including renaming integration tests and commenting out unit tests
+The following is a command reference rather than captured help output. Use `utgen --help` or `utgen <command> --help` for the parser's options.
 
-Usage: utgen pre-process [OPTIONS] --project-dir <PROJECT_DIR>
+| Command | Current behavior |
+| --- | --- |
+| `pre-process` | Rename existing `tests` directories to `tests.bak` and comment out test modules and test functions under the selected `src` directories. |
+| `analyze` | Log the selected directories. Run brinfo and focxt explicitly to perform analysis. |
+| `gen` | Generate candidates, check compilation, and collect pre-repair statistics. |
+| `fix` | Attempt to repair candidates with compilation errors and collect post-repair statistics using unit-test insertion. |
 
-Options:
-  -p, --project-dir <PROJECT_DIR>  Path to the project directory, can be relative to the current directory
-  -w, --work-dir <WORK_DIR>        Path to the work directory(s), separated by commas (e.g., dir1,dir2), can be relative to the project directory, default to the project directory
-  -h, --help                       Print help
-```
+All four commands take `-p, --project-dir`. Use `-w, --work-dir` for individual crates in a larger project. Both relative paths are resolved against the current shell directory; work directories do not resolve against `--project-dir`. Work directories may be repeated or comma-separated and default to the project directory.
 
-The `pre-process` command will preprocess the selected project, including renaming existing integration test folders and commenting out existing unit tests. The parameters are as follows:
+### Preprocessing
 
-`-p`：Specify the path to the project for which tests need to be generated.
-
-`-w`：If the project contains multiple subprojects, specify the paths to the subprojects.
-
-### gen
+Use a working copy of the target project, as preprocessing changes source files and test directories:
 
 ```sh
-utgen gen --help
+utgen pre-process -p <target-crate-path>
 ```
 
-The output is as follows:
-
-```
-Generate and run tests for the project to collect coverage data
-
-Usage: utgen gen [OPTIONS] --project-dir <PROJECT_DIR>
-
-Options:
-  -p, --project-dir <PROJECT_DIR>  Path to the project directory, can be relative to the current directory
-  -w, --work-dir <WORK_DIR>        Path to the work directory(s), separated by commas (e.g., dir1,dir2), can be relative to the project directory, default to the project directory
-  -t, --tasks <TASKS>              Number of parallel test generation tasks [default: 128]
-  -i, --integration                Whether to generate integration tests
-  -r, --requirement                Whether to provide requirements in prompt
-  -c, --context                    Whether to provide context in prompt
-  -o, --oracle                     Whether to generate oracle independently
-```
-
-The `gen` command will generate tests for the selected project but will not fix them. It will then run the tests to collect data. The parameters are as follows:
-
-`-p`：Specify the path to the project for which tests need to be generated.
-
-`-w`：If the project contains multiple subprojects, specify the paths to the subprojects.
-
-`-i`：Specify this option to run in integration test mode, meaning all generated tests will be placed in the `tests` folder, and only public functions or methods will be tested.
-
-`-r`: Specify this option to ask LLM to generate tests for each condition chain.
-
-`-c`: Specify this option to provide context of the focal function to the LLM.
-
-
-### fix
+For multiple crates, use explicit work-directory paths:
 
 ```sh
-utgen fix --help
+utgen pre-process -p <project-root> -w <crate-path-1> -w <crate-path-2>
 ```
 
-The output is as follows:
+The current preprocessor recognizes modules whose `cfg` attribute text contains `test`, and functions with `test` or namespaced `test` attributes. It does not provide a general reverse-preprocessing command.
 
-```
-Fix and run tests for the project to collect coverage data
+### Generation
 
-Usage: utgen fix [OPTIONS] --project-dir <PROJECT_DIR>
-
-Options:
-  -p, --project-dir <PROJECT_DIR>  Path to the project directory, can be relative to the current directory
-  -w, --work-dir <WORK_DIR>        Path to the work directory(s), separated by commas (e.g., dir1,dir2), can be relative to the project directory, default to the project directory
-  -h, --help                       Print help
+```sh
+utgen gen -p <target-crate-path> --requirement --context
 ```
 
-The `fix` command will attempt to fix the generated tests for the selected project and then run the tests to collect data. The parameters are as follows:
+| Option | Meaning |
+| --- | --- |
+| `-r, --requirement` | Generate for each representative condition chain. Default: off. |
+| `-c, --context` | Include the focal function's context in the prompt. Default: off. |
+| `-o, --oracle` | Use separate input-range, test-prefix, and oracle generation. Default: off; otherwise generate complete tests directly. |
+| `-i, --integration` | Generate integration tests under `tests/`, using the analysis visibility flag to select functions and compilation checks to filter candidates. Default: off. |
+| `-t, --tasks` | Default: 128. Currently sizes the result channel and does not enforce a strict limit on concurrent LLM requests. |
 
-`-p`：Specify the path to the project for which tests need to be generated.
+Generation may append an `ntest` dependency to the target's Cargo.toml. Existing `utgen/generation/pre_fix/<encoded>.json` results are skipped, so use a fresh target copy for a different model, prompt, or generation mode.
 
-`-w`：If the project contains multiple subprojects, specify the paths to the subprojects.
+### Repair
+
+```sh
+utgen fix -p <target-crate-path>
+```
+
+Repair reads the generated candidates and uses compiler diagnostics to revise those that fail compilation. It does not target runtime assertion failures. The command currently accepts `--tasks`, but that value is not passed to the repair scheduler.
+
+There is no integration-mode option for repair. Candidates are inserted into source files as unit tests, and post-repair statistics use that same mode. Do not interpret `gen --integration` followed by `fix` as preserving an integration-only evaluation.
+
+## Output
+
+Paths under `utgen/` below are relative to `--project-dir`:
+
+| Path | Contents |
+| --- | --- |
+| `utgen/generation/prompt/` and `answer/` | Prompts and model responses. |
+| `utgen/generation/pre_fix/` | Candidate tests and their compilation status before repair. |
+| `utgen/generation/llm_fix/` | Candidates and their compilation status after repair. |
+| `utgen/result/` | Pre-repair coverage and execution statistics per focal function. |
+| `utgen/fixed_result/` | Post-repair coverage and execution statistics per focal function. |
+| `utgen/original_result.json` | Comparison statistics when the original integration-test backup is available. |
+
+`coverage.xml`, `coverage.json`, and `error_output.json` are intermediate files in the work directory and may be deleted after parsing. The current implementation does not produce an HTML report.
+
+See the [bytes example](../examples/README.md) for a working-copy workflow and the [Chinese technical guide](../docs/palm-rust-unit-test-generation.md) for implementation details.
