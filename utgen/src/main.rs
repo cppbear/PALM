@@ -1,10 +1,10 @@
 use clap::{Args, Parser, Subcommand};
 use log::info;
-use utgen::{comment_out_tests, gen_test_rate, gen_tests_project, llm_fix, rename_tests_to_bak};
-use utgen::{LlmConfig, LLM};
 use simplelog::{ColorChoice, ConfigBuilder, LevelFilter, TermLogger, TerminalMode};
 use std::env;
 use std::path::PathBuf;
+use utgen::{LLM, LlmConfig, analyze_project, validate_repair};
+use utgen::{comment_out_tests, gen_test_rate, gen_tests_project, llm_fix, rename_tests_to_bak};
 
 /// Generate unit tests for a project
 #[derive(Debug, Parser)]
@@ -63,7 +63,7 @@ struct Opts {
     /// Path to the project directory, can be relative to the current directory
     #[arg(short, long)]
     project_dir: PathBuf,
-    /// Path to the work directory(s), separated by commas (e.g., dir1,dir2), can be relative to the project directory, default to the project directory
+    /// Crate directories, separated by commas; relative to the current directory
     #[arg(short, long, use_value_delimiter = true)]
     work_dir: Vec<PathBuf>,
 }
@@ -81,20 +81,22 @@ fn init_log() {
     .unwrap();
 }
 
-fn get_dirs(options: Opts) -> (PathBuf, Vec<PathBuf>) {
-    let current_dir = env::current_dir().unwrap();
-    let project_dir = current_dir
-        .join(options.project_dir)
-        .canonicalize()
-        .unwrap();
+fn get_dirs(options: Opts) -> std::io::Result<(PathBuf, Vec<PathBuf>)> {
+    let current_dir = env::current_dir()?;
+    let project_dir = current_dir.join(options.project_dir).canonicalize()?;
     let mut work_dirs = Vec::new();
     for work_dir in options.work_dir {
-        work_dirs.push(current_dir.join(work_dir).canonicalize().unwrap());
+        work_dirs.push(current_dir.join(work_dir).canonicalize()?);
     }
     if work_dirs.is_empty() {
         work_dirs.push(project_dir.clone());
     }
-    (project_dir, work_dirs)
+    if !project_dir.is_dir() || work_dirs.iter().any(|dir| !dir.is_dir()) {
+        return Err(std::io::Error::other(
+            "Project and work paths must be directories",
+        ));
+    }
+    Ok((project_dir, work_dirs))
 }
 
 #[tokio::main]
@@ -106,7 +108,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match cli.command {
         // preprocess project
         Command::PreProcess { options } => {
-            let (project_dir, work_dirs) = get_dirs(options);
+            let (project_dir, work_dirs) = get_dirs(options)?;
             info!(
                 "Preprocessing project at {}, with work directory(s) {:?}",
                 project_dir.display(),
@@ -114,21 +116,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
 
             // Rename integration tests
-            rename_tests_to_bak(&project_dir).unwrap();
-
-            // Comment out unit tests
             for work_dir in work_dirs {
-                comment_out_tests(&work_dir).unwrap();
+                if work_dir.join("tests").exists() && work_dir.join("tests.bak").exists() {
+                    return Err(std::io::Error::other(
+                        "tests.bak already exists; use a fresh working copy",
+                    )
+                    .into());
+                }
+                comment_out_tests(&work_dir)?;
+                rename_tests_to_bak(&work_dir)?;
             }
         }
         // analyze project
         Command::Analyze { options } => {
-            let (project_dir, work_dirs) = get_dirs(options);
+            let (project_dir, work_dirs) = get_dirs(options)?;
             info!(
                 "Analyzing project at {}, with work directory(s) {:?}",
                 project_dir.display(),
                 work_dirs
             );
+            for work_dir in &work_dirs {
+                if work_dirs.len() != 1 || work_dir != &project_dir {
+                    return Err(std::io::Error::other(
+                        "analyze currently supports one standalone crate; pass its root with -p",
+                    )
+                    .into());
+                }
+                analyze_project(work_dir)?;
+            }
         }
         // generate unit tests
         Command::Gen {
@@ -140,7 +155,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             oracle,
         } => {
             let llm = LLM::new(LlmConfig::load(cli.config.as_deref())?);
-            let (project_dir, work_dirs) = get_dirs(options);
+            let (project_dir, work_dirs) = get_dirs(options)?;
             info!(
                 "Generating tests for project at {}, with work directory(s) {:?}",
                 project_dir.display(),
@@ -159,7 +174,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     context,
                     oracle,
                 )
-                .await;
+                .await?;
             }
             // Collect coverage rate and pass rate for each work directory
             for work_dir in work_dirs.iter() {
@@ -169,13 +184,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // fix unit tests
         Command::Fix { options, tasks } => {
             let llm = LLM::new(LlmConfig::load(cli.config.as_deref())?);
-            let (project_dir, work_dirs) = get_dirs(options);
+            let (project_dir, work_dirs) = get_dirs(options)?;
             info!(
                 "Fixing tests for project at {}, with work directory(s) {:?}",
                 project_dir.display(),
                 work_dirs
             );
             for work_dir in work_dirs.iter() {
+                validate_repair(&project_dir, work_dir)?;
                 llm_fix(&llm, project_dir.clone(), work_dir.clone()).await;
             }
             //gen_test_rate_aggregated(&project_dir, false);

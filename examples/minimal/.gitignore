@@ -1,0 +1,7 @@
+/target/
+/brinfo/
+/focxt/
+/utgen/
+/tests.bak/
+/coverage.*
+/error_output.json

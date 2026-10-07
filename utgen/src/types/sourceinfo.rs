@@ -214,10 +214,13 @@ impl<'de> serde::Deserialize<'de> for SourceInfo {
             return Err(serde::de::Error::custom("Invalid SourceInfo format"));
         }
         let file_path = parts[0].to_string();
-        let start_line = parts[1].parse().unwrap();
-        let start_column = parts[2].parse().unwrap();
-        let end_line = parts[3].parse().unwrap();
-        let end_column = parts[4].parse().unwrap();
+        let start_line: usize = parts[1].parse().map_err(serde::de::Error::custom)?;
+        let start_column: usize = parts[2].parse().map_err(serde::de::Error::custom)?;
+        let end_line: usize = parts[3].parse().map_err(serde::de::Error::custom)?;
+        let end_column: usize = parts[4].parse().map_err(serde::de::Error::custom)?;
+        if start_line == 0 || start_column == 0 || end_line < start_line || end_column == 0 || (start_line == end_line && end_column < start_column) {
+            return Err(serde::de::Error::custom("Invalid source location bounds"));
+        }
         Ok(SourceInfo {
             file_path,
             start_line,

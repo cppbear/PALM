@@ -32,7 +32,7 @@ An absolute path continues to work after changing into the target crate. Relativ
 
 Changing configuration takes effect on the next invocation without rebuilding. There are no built-in model credentials. Configuration values are not printed in configuration diagnostics.
 
-Install the toolchain and coverage tool described in the [project README](../README.md#prerequisites). Before generation, run `cargo brinfo` in the target crate and `focxt -c <target-crate-path>` to produce:
+Install the toolchain and coverage tool described in the [project README](../README.md#prerequisites). On a fresh working copy, run `utgen pre-process -p <target-crate-path>` and then `utgen analyze -p <target-crate-path>` to produce:
 
 ```text
 brinfo/name_map.json
@@ -76,12 +76,12 @@ The following is a command reference rather than captured help output. Use `utge
 
 | Command | Current behavior |
 | --- | --- |
-| `pre-process` | Rename existing `tests` directories to `tests.bak` and comment out test modules and test functions under the selected `src` directories. |
-| `analyze` | Log the selected directories. Run brinfo and focxt explicitly to perform analysis. |
+| `pre-process` | Rename each selected crate's `tests/` to `tests.bak/` and replace test-only source ranges with whitespace while preserving line breaks and byte offsets. |
+| `analyze` | Clear Cargo's check cache, run brinfo and focxt, and validate their function indices and artifacts. Currently supports one standalone crate passed with `-p`. |
 | `gen` | Generate candidates, check compilation, and collect pre-repair statistics. |
 | `fix` | Attempt to repair candidates with compilation errors and collect post-repair statistics using unit-test insertion. |
 
-All four commands take `-p, --project-dir`. Use `-w, --work-dir` for individual crates in a larger project. Both relative paths are resolved against the current shell directory; work directories do not resolve against `--project-dir`. Work directories may be repeated or comma-separated and default to the project directory.
+All four commands take `-p, --project-dir`. Use `-w, --work-dir` for individual crates in a larger project. Both relative paths are resolved against the current shell directory; work directories do not resolve against `--project-dir`. Work directories may be repeated or comma-separated and default to the project directory. The current `analyze` command requires a single standalone crate; use that crate as `-p`, with no separate work-directory selection.
 
 ### Preprocessing
 
@@ -97,7 +97,17 @@ For multiple crates, use explicit work-directory paths:
 utgen pre-process -p <project-root> -w <crate-path-1> -w <crate-path-2>
 ```
 
-The current preprocessor recognizes modules whose `cfg` attribute text contains `test`, and functions with `test` or namespaced `test` attributes. It does not provide a general reverse-preprocessing command.
+The preprocessor removes modules whose `cfg` predicates are provably disabled without `test`, and functions with `test` or namespaced `test` attributes. It preserves production predicates such as `cfg(not(test))` and treats unknown feature/target predicates conservatively. Source files retain their line breaks and byte offsets. UTF-8 character columns can change inside blanked ranges; perform analysis after preprocessing. Existing `tests.bak` is never overwritten. There is no general reverse-preprocessing command.
+
+### Analysis
+
+```sh
+utgen analyze -p <target-crate-path>
+```
+
+The target must have `Cargo.toml` and `src/`, with no existing `brinfo/` or `focxt/` directory. Use a fresh prepared copy when repeating analysis. Tool failures return a nonzero exit status. No model configuration is needed.
+
+For manual analysis, run `cargo clean`, `cargo brinfo`, then `focxt -c <target-crate-path>` in the prepared crate. A prior `cargo check` can otherwise prevent the compiler wrapper from running.
 
 ### Generation
 
@@ -112,6 +122,8 @@ utgen gen -p <target-crate-path> --requirement --context
 | `-o, --oracle` | Use separate input-range, test-prefix, and oracle generation. Default: off; otherwise generate complete tests directly. |
 | `-i, --integration` | Generate integration tests under `tests/`, using the analysis visibility flag to select functions and compilation checks to filter candidates. Default: off. |
 | `-t, --tasks` | Default: 128. Currently sizes the result channel and does not enforce a strict limit on concurrent LLM requests. |
+
+Generation validates the branch index, context index, context files, and source paths before modifying the target. Missing or inconsistent artifacts are errors. A failed generation task is reported instead of being silently lost before statistics. `--tasks 0` is rejected.
 
 Generation may append an `ntest` dependency to the target's Cargo.toml. Existing `utgen/generation/pre_fix/<encoded>.json` results are skipped, so use a fresh target copy for a different model, prompt, or generation mode.
 
@@ -140,4 +152,4 @@ Paths under `utgen/` below are relative to `--project-dir`:
 
 `coverage.xml`, `coverage.json`, and `error_output.json` are intermediate files in the work directory and may be deleted after parsing. The current implementation does not produce an HTML report.
 
-See the [bytes example](../examples/README.md) for a working-copy workflow and the [Chinese technical guide](../docs/palm-rust-unit-test-generation.md) for implementation details.
+See the [deterministic minimal pipeline](../docs/minimal-pipeline.md) and the [bytes example](../examples/README.md) for a working-copy workflow and the [Chinese technical guide](../docs/palm-rust-unit-test-generation.md) for implementation details.

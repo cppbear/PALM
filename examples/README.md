@@ -1,5 +1,7 @@
 # Examples
 
+Start with the [minimal pipeline](../docs/minimal-pipeline.md) for an automated, no-credentials validation. The commands below describe the larger bytes target; the complete pipeline is currently regression-tested on the minimal crate.
+
 ## bytes
 
 The bundled target is [tokio-rs/bytes](https://github.com/tokio-rs/bytes), version 1.10.0. It is excluded from PALM's tool workspace and retains its own source files, tests, and license.
@@ -10,7 +12,7 @@ Follow the [root installation instructions](../README.md#installation), includin
 
 ### Prepare a Working Copy
 
-Preprocessing comments out existing tests and renames test directories. Generation can add `ntest` to the target's Cargo.toml, and compilation checks temporarily insert tests. Use a separate copy to preserve the bundled example.
+Preprocessing blanks existing test source ranges and renames test directories. Generation can add `ntest` to the target's Cargo.toml, and compilation checks temporarily insert tests. Use a separate copy to preserve the bundled example.
 
 Run the following from the PALM repository root, keeping the same shell for subsequent commands:
 
@@ -22,20 +24,18 @@ cp -R "$palm_repo/examples/bytes/." "$palm_example_dir/"
 cd "$palm_example_dir"
 ```
 
-### Extract Information
+### Preprocess and Analyze
 
 ```sh
-cargo clean
-cargo brinfo
-focxt -c "$palm_example_dir"
+utgen pre-process -p "$palm_example_dir"
+utgen analyze -p "$palm_example_dir"
 ```
 
-The last command also runs `cargo call-chain`. The `utgen analyze` subcommand does not currently perform these analysis steps.
+Analysis runs brinfo and focxt (including call-chain) on the prepared source. If a function lacks corresponding context, generation reports the missing artifact; support for larger targets is still being validated.
 
 ### Generate and Repair Unit Tests
 
 ```sh
-utgen pre-process -p "$palm_example_dir"
 utgen gen -p "$palm_example_dir" --requirement --context
 utgen fix -p "$palm_example_dir"
 ```

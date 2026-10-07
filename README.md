@@ -16,7 +16,7 @@ PALM combines program analysis with LLMs to generate Rust tests, repair compilat
 2. Install [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov):
 
    ```sh
-   cargo +stable install cargo-llvm-cov --locked
+   cargo +stable install cargo-llvm-cov --version 0.6.16 --locked
    ```
 
 3. Use the same nightly toolchain for the target crate. The analysis tools handle `lib` and `bin` targets.
@@ -64,11 +64,11 @@ Run `docker/docker-run` from the same directory to mount the repository at `/hom
 
 ## Workflow
 
-Run `cargo brinfo` in the target crate, then run `focxt -c <target-crate-path>` to extract condition chains and context. The current `utgen analyze` command only logs its arguments; these analysis steps must be run explicitly.
+On a fresh working copy of a standalone crate, run `utgen pre-process -p <target-crate-path>` before `utgen analyze -p <target-crate-path>`. Analysis clears Cargo's check cache, runs brinfo and focxt, and verifies their outputs. It rejects existing `brinfo/` or `focxt/` directories so previous analysis results cannot be mixed into the run.
 
-Use `utgen pre-process`, `utgen gen`, and `utgen fix` for preprocessing, generation, and compilation repair. Pass `--requirement --context` to `utgen gen` to include path constraints and focal context. Preprocessing and test checks modify the target tree; use a working copy of the target project.
+Then use `utgen gen` and `utgen fix` for generation and compilation repair. Pass `--requirement --context` to `utgen gen` to include path constraints and focal context. Preprocessing and test checks modify the target tree; use a working copy of the target project.
 
-See the [bytes example](examples/README.md) and [utgen usage](utgen/README.md) for the commands and result locations.
+Start with the [minimal pipeline check](docs/minimal-pipeline.md), which uses fixed local model responses and verifies analysis, generation, repair, source restoration, and coverage. The [bytes example](examples/README.md) remains a larger follow-up target. See [utgen usage](utgen/README.md) for command details.
 
 ## Development checks
 
@@ -79,7 +79,7 @@ cargo build --workspace --locked
 cargo test --workspace --locked
 ```
 
-Default tests use local model-response fixtures and do not contact a model service. The real-service test is opt-in; see [utgen testing](utgen/README.md#testing). Dependency downloads may still require network access. [Build validation](docs/build-validation.md) records the baseline and checks performed; the GitHub Actions workflow runs the basic checks on Linux.
+Default tests use local model-response fixtures and do not contact a model service. The real-service test is opt-in; see [utgen testing](utgen/README.md#testing). Dependency downloads may still require network access. [Build validation](docs/build-validation.md) records the baseline and checks performed; the GitHub Actions workflow runs these checks and the minimal pipeline on Linux.
 
 ## Documentation
 
