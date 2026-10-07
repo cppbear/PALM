@@ -20,7 +20,7 @@ PALM combines program analysis with LLMs to generate Rust tests, repair compilat
    ```
 
 3. Use the same nightly toolchain for the target crate. The analysis tools handle `lib` and `bin` targets.
-4. Prepare your LLM API address, key, and model as described in [utgen](utgen/README.md).
+4. For generation and repair, prepare runtime model configuration as described in [utgen](utgen/README.md#prerequisites). Building, installation, and ordinary tests do not require model credentials.
 
 ## Project Structure
 
@@ -37,7 +37,7 @@ PALM combines program analysis with LLMs to generate Rust tests, repair compilat
 
 ## Installation
 
-Create `utgen/res/api.json` before building or installing utgen; see the [configuration instructions](utgen/README.md#prerequisites). The configuration is embedded at compile time, so changing it requires rebuilding utgen.
+No model configuration is needed to build or install the tools. `utgen gen` and `utgen fix` load configuration at runtime; changing the API address, key, or model takes effect on the next command without rebuilding.
 
 From the repository root, run:
 

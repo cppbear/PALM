@@ -283,7 +283,7 @@ utgen fix --project-dir <PROJECT_DIR> [--work-dir <WORK_DIR>...] [--tasks <N>]
 
 ### 8.2 LLM 配置
 
-`utgen/src/gene/llm.rs` 使用 `async-openai` 调用兼容 OpenAI Chat Completions 的接口。配置文件为：
+`utgen/src/gene/llm.rs` 使用 `async-openai` 调用兼容 OpenAI Chat Completions 的接口。模型配置由 `utgen/src/config.rs` 在运行时加载；可以复制 `utgen/res/api.example.json` 并填写为：
 
 ```text
 utgen/res/api.json
@@ -299,7 +299,13 @@ utgen/res/api.json
 }
 ```
 
-重要：代码使用 `include_str!("../../res/api.json")`，配置在编译时嵌入二进制。因此必须在构建或 `cargo install` 之前创建 `api.json`。如果之后修改 API 地址、key 或模型，需要重新构建或重新安装 `utgen`。
+使用 `--config <配置路径>` 显式指定配置文件，未指定时读取 `PALM_CONFIG` 指向的文件。`PALM_API_BASE`、`PALM_API_KEY`、`PALM_MODEL` 分别覆盖文件中的字段，也可以单独提供完整配置。选中的文件不可读或格式错误时会报错，最终三个字段都必须非空。相对配置路径基于命令执行目录；不会自动搜索当前目录或安装目录下的 `api.json`。
+
+构建、安装、帮助、预处理和分析不需要模型配置。`gen` 和 `fix` 在开始处理目标项目之前加载并检查配置；修改地址、密钥或模型后，下次命令运行立即生效，不需要重新编译。建议从仓库根目录设置绝对路径：
+
+```sh
+export PALM_CONFIG="$(pwd)/utgen/res/api.json"
+```
 
 当前 PALM 请求固定使用非流式输出、单个回答，并设置 `max_tokens=10000`、`temperature=1.0`、`top_p=0`。这些参数来自现有实现，整合时保持原样。
 
@@ -473,7 +479,7 @@ components = ["rust-src", "rustc-dev", "llvm-tools-preview"]
 
 本仓库根目录已经有 `rust-toolchain.toml`，示例项目 `examples/bytes/` 也包含对应配置。
 
-准备 `utgen/res/api.json`：
+构建和安装无需密钥。运行 `gen`、`fix` 前准备 `utgen/res/api.json`，并按 8.2 节设置 `PALM_CONFIG` 或传入 `--config`：
 
 ```json
 {
@@ -594,10 +600,11 @@ utgen fix -p <target-crate-path>
 
 ### 10.7 示例：`examples/bytes`
 
-先按前文配置 `utgen/res/api.json` 并安装工具。然后从仓库根目录复制 bytes 到临时目录，后续命令在同一个 shell 中执行：
+先安装工具，再按前文准备运行时配置 `utgen/res/api.json`。然后从仓库根目录复制 bytes 到临时目录，后续命令在同一个 shell 中执行：
 
 ```sh
 palm_repo="$(pwd)"
+export PALM_CONFIG="$palm_repo/utgen/res/api.json"
 palm_example_dir="$(mktemp -d "${TMPDIR:-/tmp}/palm-bytes.XXXXXX")"
 cp -R "$palm_repo/examples/bytes/." "$palm_example_dir/"
 cd "$palm_example_dir"
@@ -628,13 +635,15 @@ utgen/fixed_result/
 
 ## 11. 常见问题与排查
 
-### 11.1 `utgen` 构建时找不到 `api.json`
+### 11.1 `utgen` 提示缺少模型配置
 
-`utgen` 使用 `include_str!("../../res/api.json")`，所以 `utgen/res/api.json` 必须在构建前存在。创建或修改后重新运行：
+当前版本不再在编译时读取 `api.json`。若 `gen` 或 `fix` 提示缺少 `PALM_API_BASE`、`PALM_API_KEY` 或 `PALM_MODEL`，请按 8.2 节提供配置。例如从仓库根目录执行：
 
 ```sh
-cargo install --path utgen --locked
+utgen --config utgen/res/api.json gen -p <target-crate-path> --requirement --context
 ```
+
+旧版配置文件的三个字段仍可使用，但需要显式选择文件。若构建仍报 `include_str!` 找不到 `api.json`，请核对正在构建的源码版本。
 
 ### 11.2 `cargo brinfo` 在 workspace 根目录失败
 
@@ -689,7 +698,7 @@ git diff
 
 ### 11.7 修改 prompt 或 API 后没有生效
 
-`utgen/res/*.json` 中的 prompt 和 `api.json` 都通过 `include_str!` 编译进二进制。修改后需要重新构建或重新安装 `utgen`。
+提示词模板仍通过 `include_str!` 编译进二进制，修改模板后需要重新构建或重新安装。模型配置在运行时读取，无需重新编译；请检查 `--config` / `PALM_CONFIG` 选择的文件以及三个字段环境变量是否覆盖了文件内容。已有生成缓存不会因配置变化失效，切换配置后应使用新的目标副本。
 
 ## 12. 推荐阅读顺序
 

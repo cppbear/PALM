@@ -1,4 +1,4 @@
-use super::{gen_input_range, gen_oracle, gen_prefix, gen_test};
+use super::{gen_input_range, gen_oracle, gen_prefix, gen_test, LLM};
 use super::{inputprompts, oracleprompts, prefixprompts, testprompts};
 use crate::utils::target_clean;
 use crate::types::{BrData, ChainTestInfo, TestGenInfo};
@@ -9,6 +9,7 @@ use std::fs;
 use std::path::Path;
 
 pub async fn generation_tests(
+    llm: &LLM,
     brdata: BrData,
     encoded_name: &str,
     focxt_encoded_name: &str,
@@ -21,6 +22,7 @@ pub async fn generation_tests(
 ) -> Option<TestGenInfo> {
     if oracle {
         return gen_tests_cot(
+            llm,
             brdata,
             encoded_name,
             focxt_encoded_name,
@@ -33,6 +35,7 @@ pub async fn generation_tests(
         .await;
     } else {
         return gen_full_tests(
+            llm,
             brdata,
             encoded_name,
             focxt_encoded_name,
@@ -67,6 +70,7 @@ fn split_oracles(oracles: &Vec<String>) -> Vec<Vec<String>> {
 }
 
 async fn gen_tests_cot(
+    llm: &LLM,
     brdata: BrData,
     encoded_name: &str,
     focxt_encoded_name: &str,
@@ -143,7 +147,7 @@ async fn gen_tests_cot(
             }
 
             // Infer the input range for each condition chain
-            let input_range = gen_input_range(&input_pt_info, &cond_prompt).await;
+            let input_range = gen_input_range(llm, &input_pt_info, &cond_prompt).await;
             if input_range.is_none() {
                 return None;
             }
@@ -157,6 +161,7 @@ async fn gen_tests_cot(
 
             // Generate test prefix for each condition chain
             let test_answer_list = gen_prefix(
+                llm,
                 // project_dir,
                 work_dir,
                 &answer_dir,
@@ -178,7 +183,7 @@ async fn gen_tests_cot(
                 for test_info in chain_test_answer.get_tests_mut() {
                     let mut code = common.clone();
                     code.extend(test_info.prefix_func());
-                    let oracle = gen_oracle(&oracle_pt_info, &cond_prompt, &code).await;
+                    let oracle = gen_oracle(llm, &oracle_pt_info, &cond_prompt, &code).await;
                     if oracle.is_some() {
                         let (oracles , usage_completion, usage_prompt)= oracle.unwrap();
                         completion_tokens += usage_completion;
@@ -209,7 +214,7 @@ async fn gen_tests_cot(
         let id = 0;
 
         // Infer the input range for each condition chain
-        let input_range = gen_input_range(&input_pt_info, &vec![]).await;
+        let input_range = gen_input_range(llm, &input_pt_info, &vec![]).await;
         if input_range.is_none() {
             return None;
         }
@@ -223,6 +228,7 @@ async fn gen_tests_cot(
 
         // Generate test prefix for each condition chain
         let test_answer_list = gen_prefix(
+            llm,
             // project_dir,
             work_dir,
             &answer_dir,
@@ -244,7 +250,7 @@ async fn gen_tests_cot(
             for test_info in chain_test_answer.get_tests_mut() {
                 let mut code = common.clone();
                 code.extend(test_info.prefix_func());
-                let oracle = gen_oracle(&oracle_pt_info, &vec![], &code).await;
+                let oracle = gen_oracle(llm, &oracle_pt_info, &vec![], &code).await;
                 if oracle.is_some() {
                     let (oracles , usage_completion, usage_prompt) = oracle.unwrap();
                     completion_tokens += usage_completion;
@@ -284,6 +290,7 @@ async fn gen_tests_cot(
 }
 
 async fn gen_full_tests(
+    llm: &LLM,
     brdata: BrData,
     encoded_name: &str,
     focxt_encoded_name: &str,
@@ -350,6 +357,7 @@ async fn gen_full_tests(
 
             // Generate test functions for each condition chain
             let test_answer_list = gen_test(
+                llm,
                 // project_dir,
                 work_dir,
                 &answer_dir,
@@ -373,6 +381,7 @@ async fn gen_full_tests(
 
         // Generate test functions for each condition chain
         let test_answer_list = gen_test(
+            llm,
             // project_dir,
             work_dir,
             &answer_dir,

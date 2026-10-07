@@ -10,8 +10,7 @@ fn postprocess(inputs: &mut Vec<String>) {
     }
 }
 
-pub async fn gen_input_range(pt_info: &Prompt, conds: &Vec<String>) -> Option<(String, u32, u32)> {
-    let llm = LLM::new().unwrap();
+pub async fn gen_input_range(llm: &LLM, pt_info: &Prompt, conds: &Vec<String>) -> Option<(String, u32, u32)> {
     let system_pt = &pt_info.system_pt;
     let static_pt = &pt_info.static_pt;
     let mut completion_tokens = 0;

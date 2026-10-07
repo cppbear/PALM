@@ -1,30 +1,22 @@
+use crate::LlmConfig;
 use async_openai::{
+    Client,
     config::OpenAIConfig,
     types::{
         ChatCompletionRequestMessage, ChatCompletionRequestSystemMessageArgs,
-         ChatCompletionRequestUserMessageArgs, CreateChatCompletionRequestArgs,
+        ChatCompletionRequestUserMessageArgs, CreateChatCompletionRequestArgs,
     },
-    Client,
 };
 use futures::StreamExt;
-use serde::Deserialize;
 
-#[derive(Deserialize, Debug, Clone)]
-struct LLMConfig {
-    base: String,
-    key: String,
-    model: String,
-}
-
+#[derive(Clone)]
 pub struct LLM {
-    config: LLMConfig,
+    config: LlmConfig,
 }
 
 impl LLM {
-    pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
-        let api_config = include_str!("../../res/api.json");
-        let config: LLMConfig = serde_json::from_str(api_config)?;
-        Ok(Self { config })
+    pub fn new(config: LlmConfig) -> Self {
+        Self { config }
     }
 
     pub async fn fetch_answer(
@@ -176,23 +168,117 @@ impl LLM {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+        time::{Duration, timeout},
+    };
+
+    // Exercise the actual HTTP client and request shape without a model service.
+    async fn mock_model() -> (LLM, tokio::task::JoinHandle<serde_json::Value>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            timeout(Duration::from_secs(10), async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut data = Vec::new();
+                let (headers_end, length) = loop {
+                    let mut buffer = [0; 2048];
+                    let count = socket.read(&mut buffer).await.unwrap();
+                    assert!(count > 0, "request ended before headers");
+                    data.extend_from_slice(&buffer[..count]);
+                    if let Some(end) = data.windows(4).position(|s| s == b"\r\n\r\n") {
+                        let headers = String::from_utf8_lossy(&data[..end]).to_lowercase();
+                        assert!(headers.starts_with("post /v1/chat/completions http/1.1"));
+                        assert!(headers.contains("authorization: bearer local-test-key"));
+                        let length = headers.lines().find_map(|line| {
+                            line.strip_prefix("content-length:").map(|n| n.trim().parse::<usize>().unwrap())
+                        }).unwrap();
+                        break (end + 4, length);
+                    }
+                };
+                while data.len() < headers_end + length {
+                    let mut buffer = [0; 2048];
+                    let count = socket.read(&mut buffer).await.unwrap();
+                    assert!(count > 0, "request ended before body");
+                    data.extend_from_slice(&buffer[..count]);
+                }
+                let request = serde_json::from_slice(&data[headers_end..headers_end + length]).unwrap();
+                let body = serde_json::json!({
+                    "id": "local-response", "object": "chat.completion", "created": 0, "model": "local-model",
+                    "choices": [{"index": 0, "message": {"role": "assistant", "content": "local answer"}, "finish_reason": "stop"}],
+                    "usage": {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5}
+                }).to_string();
+                let response = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body);
+                socket.write_all(response.as_bytes()).await.unwrap();
+                request
+            }).await.expect("local mock server timed out")
+        });
+        let llm = LLM::new(LlmConfig {
+            base: format!("http://{address}/v1"),
+            key: "local-test-key".into(),
+            model: "local-model".into(),
+        });
+        (llm, server)
+    }
+
+    fn check_request(request: &serde_json::Value) {
+        assert_eq!(request["model"], "local-model");
+        assert_eq!(request["max_tokens"], 10000);
+        assert_eq!(request["temperature"], 1.0);
+        assert_eq!(request["top_p"], 0.0);
+        assert_eq!(request["n"], 1);
+        assert_eq!(request["stream"], false);
+    }
 
     #[tokio::test]
+    async fn generation_uses_runtime_config_and_preserves_request_parameters() {
+        let (llm, server) = mock_model().await;
+        let (answers, completion, prompt) = timeout(
+            Duration::from_secs(10),
+            llm.fetch_answer(Some("system instruction"), "generate a test", 1, false),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(answers, vec!["local answer"]);
+        assert_eq!((completion, prompt), (3, 2));
+        let request = server.await.unwrap();
+        check_request(&request);
+        assert_eq!(request["messages"][0]["role"], "system");
+        assert_eq!(request["messages"][1]["content"], "generate a test");
+    }
+
+    #[tokio::test]
+    async fn repair_uses_runtime_config_and_preserves_request_parameters() {
+        let (llm, server) = mock_model().await;
+        let (answers, completion, prompt) = timeout(
+            Duration::from_secs(10),
+            llm.get_answer("repair a test", 1, false),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(answers, vec!["local answer"]);
+        assert_eq!((completion, prompt), (3, 2));
+        let request = server.await.unwrap();
+        check_request(&request);
+        assert_eq!(request["messages"][0]["role"], "user");
+        assert_eq!(request["messages"][0]["content"], "repair a test");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires explicitly configured model credentials and makes a real API request"]
     async fn test_llm() {
-        let llm = LLM::new().unwrap();
+        let llm = LLM::new(LlmConfig::load(None).unwrap());
         let sys_pt = "Your name is John";
         let user_pt = "Hello, what is your name?";
         let answers = llm
             .fetch_answer(Some(sys_pt), user_pt, 1, false)
             .await
-            .unwrap().0;
+            .unwrap()
+            .0;
         assert_eq!(answers.len(), 1);
-        // println!("{:?}", answers);
-        let answers = llm
-            .fetch_answer(Some(sys_pt), user_pt, 2, true)
-            .await
-            .unwrap().0;
-        assert_eq!(answers.len(), 2);
-        // println!("{:?}", answers);
+        // The production workflow currently requests one non-streaming answer.
     }
 }

@@ -4,7 +4,9 @@ utgen generates Rust tests from condition chains and focal context, checks compi
 
 ## Prerequisites
 
-Create `utgen/res/api.json` from the repository root, or `res/api.json` from this directory:
+Model configuration is loaded at runtime, once per `gen` or `fix` command. Building, installing, running help, `pre-process`, and `analyze` do not require it.
+
+Copy [api.example.json](res/api.example.json) to `utgen/res/api.json` from the repository root, then replace its placeholders:
 
 ```json
 {
@@ -14,7 +16,21 @@ Create `utgen/res/api.json` from the repository root, or `res/api.json` from thi
 }
 ```
 
-Replace the placeholders with your LLM service configuration. The file is ignored by Git and embedded into the binary with `include_str!`; changing the address, key, or model requires rebuilding utgen. No API configuration is included in the repository.
+Select the file explicitly with `--config /absolute/path/to/api.json` (before or after the subcommand), or set `PALM_CONFIG` to its path. The existing `base`, `key`, and `model` fields remain supported. A file named `api.json` is ignored by Git but is never automatically discovered.
+
+From the repository root, after creating the file:
+
+```sh
+export PALM_CONFIG="$(pwd)/utgen/res/api.json"
+```
+
+An absolute path continues to work after changing into the target crate. Relative configuration paths resolve against the command's current directory, independently of `--project-dir`. Configuration precedence is:
+
+1. `--config` selects the file; otherwise `PALM_CONFIG` selects it. An explicitly selected unreadable or invalid file is an error.
+2. `PALM_API_BASE`, `PALM_API_KEY`, and `PALM_MODEL` override their respective file fields. These variables can also supply all three fields without a file.
+3. All three resolved fields must be nonempty. Missing configuration stops generation or repair before modifying the target.
+
+Changing configuration takes effect on the next invocation without rebuilding. There are no built-in model credentials. Configuration values are not printed in configuration diagnostics.
 
 Install the toolchain and coverage tool described in the [project README](../README.md#prerequisites). Before generation, run `cargo brinfo` in the target crate and `focxt -c <target-crate-path>` to produce:
 
@@ -32,9 +48,25 @@ These files are required even when `--context` is omitted: that flag controls wh
 From the repository root:
 
 ```sh
-cargo build -p utgen
+cargo build -p utgen --locked
 cargo install --path utgen --locked
 ```
+
+## Testing
+
+```sh
+cargo test --workspace --locked
+```
+
+Default tests cover configuration loading, CLI configuration errors, and both model-request paths against a local HTTP fixture. They require no real model credentials and do not contact a model service.
+
+To explicitly run the real-service smoke test after setting `PALM_CONFIG` or the three model environment variables:
+
+```sh
+cargo test -p utgen --locked gene::llm::tests::test_llm -- --ignored --exact
+```
+
+This opt-in test sends a real, potentially billable non-streaming request. It does not evaluate the complete generation and repair pipeline.
 
 ## Commands
 

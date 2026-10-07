@@ -19,6 +19,7 @@ use tokio::sync::mpsc;
 pub use llm::LLM;
 
 async fn generation_task(
+    llm: LLM,
     brdata: BrData,
     encoded_name: &str,
     focxt_encoded_name: &str,
@@ -32,6 +33,7 @@ async fn generation_task(
 ) {
     info!("Generating tests for {}", brdata.name);
     let test_gen_info = generation_tests(
+        &llm,
         brdata,
         encoded_name,
         focxt_encoded_name,
@@ -49,6 +51,7 @@ async fn generation_task(
 }
 
 pub async fn gen_tests_project(
+    llm: &LLM,
     project_dir: &Path,
     work_dir: &Path,
     tasks: usize,
@@ -116,8 +119,10 @@ pub async fn gen_tests_project(
                 let tx = tx.clone();
                 let project_dir = project_dir.to_path_buf();
                 let work_dir = work_dir.to_path_buf();
+                let llm = llm.clone();
                 tokio::spawn(async move {
                     generation_task(
+                        llm,
                         brdata,
                         &encoded_name,
                         &focxt_encoded_name,

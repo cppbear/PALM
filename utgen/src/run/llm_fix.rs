@@ -37,8 +37,7 @@ use tokio::{
 static FIX_LOCK: OnceCell<Mutex<()>> = OnceCell::const_new();
 static FIX_TIMEOUT: u64 = 28800;
 
-async fn get_fixes_from_llm(prompt: &String, n: i32) -> Result<(Vec<String>, u32, u32), Box<dyn Error + Send>> {
-    let llm = LLM::new().unwrap();
+async fn get_fixes_from_llm(llm: &LLM, prompt: &String, n: i32) -> Result<(Vec<String>, u32, u32), Box<dyn Error + Send>> {
     let answers = llm.get_answer(&prompt, n as u8, false).await;
     answers
 }
@@ -135,6 +134,7 @@ pub fn llm_return_content_parser(work_path: &Path, llm_return_content: &String) 
 }
 
 async fn compilation_fix_assistant_for_an_error(
+    llm: &LLM,
     error_message: &ErrorMessage,
     compile_error_set: &Vec<ErrorMessage>,
     project_path: &Path,
@@ -183,7 +183,7 @@ async fn compilation_fix_assistant_for_an_error(
 
     while iterative_time < max_time_to_iterative {
         iterative_time += 1;
-        let request_choices_result = get_fixes_from_llm(&final_prompt, 1).await;
+        let request_choices_result = get_fixes_from_llm(llm, &final_prompt, 1).await;
         // let request_choices_result = Err(());
         // let request_choices_result = read_to_string(work_path.join("fix_request.txt"));
         let mut request_choices: Vec<String> = Vec::new();
@@ -317,6 +317,7 @@ async fn compilation_fix_assistant_for_an_error(
 }
 
 async fn compilation_fix_assistant_for_one_fn(
+    llm: &LLM,
     project_dir: PathBuf,
     work_path: PathBuf,
     test_gen_info: TestGenInfo,
@@ -403,6 +404,7 @@ async fn compilation_fix_assistant_for_one_fn(
                             // already_rng.push(random_num);
                             let random_error = compile_error_set.get(random_num).unwrap();
                             let once_fix_result = compilation_fix_assistant_for_an_error(
+                                llm,
                                 &random_error,
                                 &compile_error_set,
                                 &project_dir,
@@ -504,7 +506,7 @@ fn merge_common_in_code(test_gen_infos: &mut Vec<TestGenInfo>) {
     }
 }
 
-pub async fn llm_fix(project_path: PathBuf, work_path: PathBuf) {
+pub async fn llm_fix(llm: &LLM, project_path: PathBuf, work_path: PathBuf) {
     let mut test_gen_infos;
     let pre_dir = project_path.join("utgen/generation/pre_fix");
     let parent_dir = project_path.join("utgen/generation/llm_fix");
@@ -574,9 +576,10 @@ pub async fn llm_fix(project_path: PathBuf, work_path: PathBuf) {
         let encoded_name = nmap.get(test_gen_info.get_name()).unwrap().to_owned();
         let counter_clone = Arc::clone(&counter);
 
+        let llm = llm.clone();
         let handle = tokio::spawn(async move {
             let test_gen_info =
-                compilation_fix_assistant_for_one_fn(project_path_clone, work_path, test_gen_info)
+                compilation_fix_assistant_for_one_fn(&llm, project_path_clone, work_path, test_gen_info)
                     .await;
             let lock = FIX_LOCK.get_or_init(|| async { Mutex::new(()) }).await;
             let guard = lock.lock().await;

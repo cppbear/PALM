@@ -18,6 +18,7 @@ fn postprocess(inputs: &mut Vec<String>) {
 }
 
 pub async fn gen_test(
+    llm: &LLM,
     // project_dir: &Path,
     work_dir: &Path,
     answer_dir: &Path,
@@ -26,7 +27,6 @@ pub async fn gen_test(
     conds: &Vec<String>,
     integration: bool,
 ) -> Option<Vec<ChainTestAnswer>> {
-    let llm = LLM::new().unwrap();
     let system_pt = &pt_info.system_pt;
     let static_pt = &pt_info.static_pt;
     let mut completion_tokens = 0;

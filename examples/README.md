@@ -6,7 +6,7 @@ The bundled target is [tokio-rs/bytes](https://github.com/tokio-rs/bytes), versi
 
 ### Install the Tools
 
-Follow the [root installation instructions](../README.md#installation), including the toolchain components, cargo-llvm-cov, and `utgen/res/api.json`. Install `focxt/call_chain` as well as brinfo, focxt, and utgen.
+Follow the [root installation instructions](../README.md#installation), including the toolchain components and cargo-llvm-cov. Install `focxt/call_chain` as well as brinfo, focxt, and utgen. Before generation or repair, create `utgen/res/api.json` as described in the [runtime configuration instructions](../utgen/README.md#prerequisites).
 
 ### Prepare a Working Copy
 
@@ -16,6 +16,7 @@ Run the following from the PALM repository root, keeping the same shell for subs
 
 ```sh
 palm_repo="$(pwd)"
+export PALM_CONFIG="$palm_repo/utgen/res/api.json"
 palm_example_dir="$(mktemp -d "${TMPDIR:-/tmp}/palm-bytes.XXXXXX")"
 cp -R "$palm_repo/examples/bytes/." "$palm_example_dir/"
 cd "$palm_example_dir"

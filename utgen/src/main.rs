@@ -1,7 +1,7 @@
 use clap::{Args, Parser, Subcommand};
 use log::info;
 use utgen::{comment_out_tests, gen_test_rate, gen_tests_project, llm_fix, rename_tests_to_bak};
-use utgen::gen_test_rate_aggregated;
+use utgen::{LlmConfig, LLM};
 use simplelog::{ColorChoice, ConfigBuilder, LevelFilter, TermLogger, TerminalMode};
 use std::env;
 use std::path::PathBuf;
@@ -9,6 +9,9 @@ use std::path::PathBuf;
 /// Generate unit tests for a project
 #[derive(Debug, Parser)]
 struct Cli {
+    /// Model configuration JSON; falls back to PALM_CONFIG. Used by gen and fix.
+    #[arg(long, global = true)]
+    config: Option<PathBuf>,
     #[command(subcommand)]
     command: Command,
 }
@@ -95,7 +98,7 @@ fn get_dirs(options: Opts) -> (PathBuf, Vec<PathBuf>) {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_log();
     let cli = Cli::parse();
     info!("Command line arguments: {:?}", cli);
@@ -136,6 +139,7 @@ async fn main() {
             context,
             oracle,
         } => {
+            let llm = LLM::new(LlmConfig::load(cli.config.as_deref())?);
             let (project_dir, work_dirs) = get_dirs(options);
             info!(
                 "Generating tests for project at {}, with work directory(s) {:?}",
@@ -146,6 +150,7 @@ async fn main() {
             // Generate tests for each work directory
             for work_dir in work_dirs.iter() {
                 gen_tests_project(
+                    &llm,
                     &project_dir,
                     &work_dir,
                     tasks,
@@ -163,6 +168,7 @@ async fn main() {
         }
         // fix unit tests
         Command::Fix { options, tasks } => {
+            let llm = LLM::new(LlmConfig::load(cli.config.as_deref())?);
             let (project_dir, work_dirs) = get_dirs(options);
             info!(
                 "Fixing tests for project at {}, with work directory(s) {:?}",
@@ -170,7 +176,7 @@ async fn main() {
                 work_dirs
             );
             for work_dir in work_dirs.iter() {
-                llm_fix(project_dir.clone(), work_dir.clone()).await;
+                llm_fix(&llm, project_dir.clone(), work_dir.clone()).await;
             }
             //gen_test_rate_aggregated(&project_dir, false);
             for work_dir in work_dirs.iter() {
@@ -178,4 +184,5 @@ async fn main() {
             }
         }
     }
+    Ok(())
 }
