@@ -1,8 +1,10 @@
 use super::{gen_input_range, gen_oracle, gen_prefix, gen_test, LLM};
 use super::{inputprompts, oracleprompts, prefixprompts, testprompts};
-use crate::utils::target_clean;
 use crate::types::{BrData, ChainTestInfo, TestGenInfo};
-use crate::utils::{backup_file, cargo_check, delete_backup, insert_test, restore_file, use_check};
+use crate::utils::{
+    RestoreOnDrop, TemporaryFile, backup_file, cargo_check, delete_backup, insert_test,
+    restore_file, target_clean, use_check,
+};
 use log::info;
 use std::collections::HashSet;
 use std::fs;
@@ -162,8 +164,6 @@ async fn gen_tests_cot(
             // Generate test prefix for each condition chain
             let test_answer_list = gen_prefix(
                 llm,
-                // project_dir,
-                work_dir,
                 &answer_dir,
                 &prefix_pt_info,
                 id,
@@ -229,8 +229,6 @@ async fn gen_tests_cot(
         // Generate test prefix for each condition chain
         let test_answer_list = gen_prefix(
             llm,
-            // project_dir,
-            work_dir,
             &answer_dir,
             &prefix_pt_info,
             id,
@@ -358,8 +356,6 @@ async fn gen_full_tests(
             // Generate test functions for each condition chain
             let test_answer_list = gen_test(
                 llm,
-                // project_dir,
-                work_dir,
                 &answer_dir,
                 &test_pt_info,
                 id,
@@ -382,8 +378,6 @@ async fn gen_full_tests(
         // Generate test functions for each condition chain
         let test_answer_list = gen_test(
             llm,
-            // project_dir,
-            work_dir,
             &answer_dir,
             &test_pt_info,
             id,
@@ -422,6 +416,7 @@ pub fn check_unit(test_gen: &mut TestGenInfo, project_dir: &Path, work_dir: &Pat
     let code_template: Vec<String> = serde_json::from_str(template).unwrap();
     // Backup the file
     backup_file(&path);
+    let restore = RestoreOnDrop(&path);
     let mut id = 0;
     for chain_test in test_gen.get_tests_mut() {
         for test_answer in chain_test.get_answers_mut() {
@@ -456,6 +451,7 @@ pub fn check_unit(test_gen: &mut TestGenInfo, project_dir: &Path, work_dir: &Pat
             }
         }
     }
+    drop(restore);
     delete_backup(&path);
 }
 
@@ -463,10 +459,9 @@ pub fn check_integration(test_gen: &mut TestGenInfo, work_dir: &Path) {
     let file_path = test_gen.get_file();
     let stem = Path::new(&file_path).file_stem().unwrap().to_str().unwrap();
     let path = work_dir.join("tests/test_check.rs");
-    if path.exists() {
-        fs::remove_file(&path).unwrap();
-    }
+    let temporary = TemporaryFile::new(&path).unwrap();
     fs::create_dir_all(&path.parent().unwrap()).unwrap();
+    fs::write(&path, "").unwrap();
     let name = test_gen.get_name().to_string();
     let fn_name = name.split("::").last().unwrap();
 
@@ -478,6 +473,14 @@ pub fn check_integration(test_gen: &mut TestGenInfo, work_dir: &Path) {
     let mut id = 0;
     for chain_test in test_gen.get_tests_mut() {
         for test_answer in chain_test.get_answers_mut() {
+            // Model tasks only collect imports. All import compilation happens
+            // here, in the single validation consumer.
+            fs::write(&path, "").unwrap();
+            let mut uses: HashSet<_> = test_answer.get_uses().iter().cloned().collect();
+            use_check(&mut uses, work_dir);
+            let mut uses: Vec<_> = uses.into_iter().collect();
+            uses.sort();
+            test_answer.set_uses(uses);
             let mut answer_use_set = init_use_set.clone();
             answer_use_set.extend(test_answer.get_uses().clone());
             let common = test_answer.get_common().clone();
@@ -507,4 +510,5 @@ pub fn check_integration(test_gen: &mut TestGenInfo, work_dir: &Path) {
             }
         }
     }
+    temporary.finish().unwrap();
 }

@@ -214,6 +214,10 @@ impl ChainTestAnswer {
         &self.uses
     }
 
+    pub fn set_uses(&mut self, uses: Vec<String>) {
+        self.uses = uses;
+    }
+
     pub fn has_test_mod(&self) -> bool {
         self.has_test_mod
     }

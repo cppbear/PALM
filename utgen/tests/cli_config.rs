@@ -67,6 +67,33 @@ fn help_and_non_model_commands_do_not_load_configuration() {
 }
 
 #[test]
+fn tasks_default_to_four_and_reject_zero_before_loading_configuration() {
+    let fixture = Fixture::new();
+    let before = fs::read(fixture.0.join("Cargo.toml")).unwrap();
+    for command in ["gen", "fix"] {
+        let help = fixture
+            .command()
+            .args([command, "--help"])
+            .output()
+            .unwrap();
+        assert!(help.status.success());
+        assert!(String::from_utf8_lossy(&help.stdout).contains("[default: 4]"));
+        let output = fixture
+            .command()
+            .args([command, "-p", ".", "--tasks", "0"])
+            .env("PALM_CONFIG", "missing.json")
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(error.contains("--tasks"), "{error}");
+        assert!(!error.contains("Cannot read"), "{error}");
+        assert_eq!(before, fs::read(fixture.0.join("Cargo.toml")).unwrap());
+        assert!(!fixture.0.join("utgen").exists());
+    }
+}
+
+#[test]
 fn analyze_validates_the_crate_without_loading_model_configuration() {
     let fixture = Fixture::new();
     let output = fixture

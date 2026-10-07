@@ -8,8 +8,7 @@ use crate::{
     gene::LLM,
     types::{InsertKind, TestGenInfo},
     utils::{
-        backup_file, cargo_check, delete_all_backups, has_backup, insert_test, restore_file,
-        target_clean,
+        RestoreOnDrop, cargo_check, create_backup, insert_test, restore_file, target_clean,
     },
 };
 use log::{error, info, warn};
@@ -17,11 +16,11 @@ use rand::Rng;
 use serde::Deserialize;
 use std::{
     cmp::min,
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     error::Error,
     fs::{self, create_dir_all, exists, read_to_string, File},
     i32,
-    io::Write,
+    io::{self, Write},
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -30,7 +29,7 @@ use std::{
 };
 use tokio::time::{sleep, Duration};
 use tokio::{
-    sync::{Mutex, OnceCell},
+    sync::{Mutex, OnceCell, Semaphore},
     time::Instant,
 };
 
@@ -262,6 +261,8 @@ async fn compilation_fix_assistant_for_an_error(
         mod_code.splice(pos..pos, insert_code);
 
         let guard = lock.lock().await;
+        restore_file(file_path);
+        let restore = RestoreOnDrop(file_path);
         insert_test(insert_kind, Path::new(&file_path), &mod_code);
         let _ = target_clean(&work_path);
 
@@ -281,6 +282,7 @@ async fn compilation_fix_assistant_for_an_error(
         // if request_result.len() != 0 {
         new_test_code = TestCode::new(&file_path, &new_test_code.codes);
         restore_file(Path::new(&file_path));
+        drop(restore);
         drop(guard);
         // let mut min_set_index = MAX;
         // let mut i = 0;
@@ -336,11 +338,6 @@ async fn compilation_fix_assistant_for_one_fn(
     // Backup the file
     // info!("Fix for {}", fn_name);
     let lock = FIX_LOCK.get_or_init(|| async { Mutex::new(()) }).await;
-    let guard = lock.lock().await;
-    if !has_backup(Path::new(&file_path)) {
-        backup_file(Path::new(&file_path));
-    }
-    drop(guard);
 
     let mut id = 0;
     for fn_test in test_gen_info.get_tests_mut().iter_mut() {
@@ -371,6 +368,8 @@ async fn compilation_fix_assistant_for_one_fn(
                         mod_code.splice(pos..pos, insert_code);
 
                         let guard = lock.lock().await;
+                        restore_file(&file_path);
+                        let restore = RestoreOnDrop(&file_path);
                         insert_test(insert_kind, Path::new(&file_path), &mod_code);
                         let _ = target_clean(&work_path);
 
@@ -389,6 +388,7 @@ async fn compilation_fix_assistant_for_one_fn(
                             compile_error_set.push(compile_error);
                         }
                         restore_file(Path::new(&file_path));
+                        drop(restore);
                         drop(guard);
 
                         let mut initial_error_num = min(compile_error_set.len() + 2, 10);
@@ -465,6 +465,8 @@ async fn compilation_fix_assistant_for_one_fn(
                         mod_code.splice(pos..pos, insert_code);
 
                         let guard = lock.lock().await;
+                        restore_file(&file_path);
+                        let restore = RestoreOnDrop(&file_path);
                         insert_test(insert_kind, &file_path, &mod_code);
                         *test_code = test_file_content.codes;
                         chain_test.repaired[num] = true;
@@ -473,6 +475,7 @@ async fn compilation_fix_assistant_for_one_fn(
                         chain_test.can_compile[num] = cargo_check(&work_path);
                         id += 1;
                         restore_file(Path::new(&file_path));
+                        drop(restore);
                         drop(guard);
                         if start_time.elapsed() >= timeout {
                             warn!("Fix time out for {}", fn_name);
@@ -506,7 +509,17 @@ fn merge_common_in_code(test_gen_infos: &mut Vec<TestGenInfo>) {
     }
 }
 
-pub async fn llm_fix(llm: &LLM, project_path: PathBuf, work_path: PathBuf) {
+pub async fn llm_fix(
+    llm: &LLM,
+    project_path: PathBuf,
+    work_path: PathBuf,
+    tasks: usize,
+) -> io::Result<()> {
+    if tasks == 0 || tasks > Semaphore::MAX_PERMITS {
+        return Err(io::Error::other(
+            "--tasks is outside the supported positive range",
+        ));
+    }
     let mut test_gen_infos;
     let pre_dir = project_path.join("utgen/generation/pre_fix");
     let parent_dir = project_path.join("utgen/generation/llm_fix");
@@ -559,42 +572,87 @@ pub async fn llm_fix(llm: &LLM, project_path: PathBuf, work_path: PathBuf) {
         }
     }
 
+    test_gen_infos.retain(|info| {
+        let relative = info.get_file();
+        if project_path == work_path {
+            relative.starts_with("src")
+        } else {
+            project_path.join(relative).starts_with(&work_path)
+        }
+    });
+    // Back up each source once before starting workers. Reject stale backups
+    // rather than reusing them, and only clean up files owned by this command.
+    let sources: BTreeSet<_> = test_gen_infos
+        .iter()
+        .map(|info| project_path.join(info.get_file()))
+        .collect();
+    let mut backups = Vec::new();
+    for source in sources {
+        match create_backup(&source) {
+            Ok(backup) => backups.push((source, backup)),
+            Err(error) => {
+                // No worker has started, so these newly created backups are unused.
+                for (_, backup) in &backups {
+                    fs::remove_file(backup)?;
+                }
+                return Err(io::Error::other(format!(
+                    "Cannot back up {}: {error}",
+                    source.display()
+                )));
+            }
+        }
+    }
+    let slots = Arc::new(Semaphore::new(tasks));
     let counter = Arc::new(AtomicUsize::new(0));
     let length = test_gen_infos.len();
     let mut handles = Vec::new();
-    for test_gen_info in test_gen_infos.into_iter() {
+    for test_gen_info in test_gen_infos {
         let project_path_clone = project_path.clone();
         let work_path = work_path.clone();
-        let file_rela = test_gen_info.get_file();
-        let file_path = project_path.join(&file_rela);
-        if (project_path == work_path && !file_rela.starts_with("src"))
-            || (project_path != work_path && !file_path.starts_with(&work_path))
-        {
-            continue;
-        }
         let parent_dir_clone = parent_dir.clone();
         let encoded_name = nmap.get(test_gen_info.get_name()).unwrap().to_owned();
         let counter_clone = Arc::clone(&counter);
-
+        let slots = slots.clone();
         let llm = llm.clone();
-        let handle = tokio::spawn(async move {
-            let test_gen_info =
-                compilation_fix_assistant_for_one_fn(&llm, project_path_clone, work_path, test_gen_info)
-                    .await;
-            let lock = FIX_LOCK.get_or_init(|| async { Mutex::new(()) }).await;
-            let guard = lock.lock().await;
+        handles.push(tokio::spawn(async move {
+            let _permit = slots.acquire_owned().await.map_err(io::Error::other)?;
+            let test_gen_info = compilation_fix_assistant_for_one_fn(
+                &llm,
+                project_path_clone,
+                work_path,
+                test_gen_info,
+            )
+            .await;
             let json_path = parent_dir_clone.join(encoded_name + ".json");
             test_gen_info.dump_json(&json_path);
-            drop(guard);
-            counter_clone.fetch_add(1, Ordering::Relaxed);
-            info!(
-                "Fix progress: {}/{}",
-                counter_clone.load(Ordering::Relaxed),
-                length
-            );
-        });
-        handles.push(handle);
+            let completed = counter_clone.fetch_add(1, Ordering::Relaxed) + 1;
+            info!("Fix progress: {completed}/{length}");
+            Ok::<_, io::Error>(())
+        }));
     }
-    futures::future::join_all(handles).await;
-    delete_all_backups(&work_path);
+    let mut failure = None;
+    // Await every worker before restoring or deleting any shared backup.
+    for handle in handles {
+        let result = handle
+            .await
+            .map_err(|error| io::Error::other(format!("Repair task failed: {error}")))
+            .and_then(|result| result);
+        if let Err(error) = result {
+            failure.get_or_insert(error);
+        }
+    }
+    for (source, backup) in &backups {
+        if let Err(error) = fs::copy(backup, source) {
+            failure.get_or_insert_with(|| {
+                io::Error::other(format!("Cannot restore {}: {error}", source.display()))
+            });
+        }
+    }
+    if let Some(error) = failure {
+        return Err(error); // Retain recovery material and skip coverage statistics.
+    }
+    for (_, backup) in backups {
+        fs::remove_file(backup)?;
+    }
+    Ok(())
 }

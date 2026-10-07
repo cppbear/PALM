@@ -122,7 +122,7 @@ This command needs neither model configuration nor analysis artifacts. It writes
 
 The same coverage entry point is used by generation and repair. It temporarily adds `#[coverage(off)]` to test-only modules (including generated `llmtests`), standalone test functions, and `#[cfg(test)]` helper functions/methods. Methods inside test-only impls are excluded individually; files with `#![cfg(test)]` are excluded as a whole. Module exclusion also covers nested helpers. Production functions called by tests remain instrumented; mixed production/test files are never excluded wholesale. Integration-test files use cargo-llvm-cov's default directory exclusions. Doc tests are not run by `--tests`.
 
-Existing coverage attributes and feature gates are reused. For conditional attributes, PALM adds a complementary `cfg_attr` only where the existing setting is absent; rustc evaluates the conditions for each build. Explicit `coverage(on)` settings are respected. The nightly feature gate is inserted temporarily on the same line at crate roots, leaving compiler flags and Cargo configuration untouched. Ordinary compilation and repair need no coverage attributes. Coverage annotations are removed by restoring the bytes saved at coverage entry, after success or a returned build/report error. Temporary insertions preserve line numbers, but columns and byte offsets can change while measuring; use working copies and do not edit them concurrently. Recovery for the broader generation/repair backup flow and forced termination is still pending.
+Existing coverage attributes and feature gates are reused. For conditional attributes, PALM adds a complementary `cfg_attr` only where the existing setting is absent; rustc evaluates the conditions for each build. Explicit `coverage(on)` settings are respected. The nightly feature gate is inserted temporarily on the same line at crate roots, leaving compiler flags and Cargo configuration untouched. Ordinary compilation and repair need no coverage attributes. Coverage annotations are removed by restoring the bytes saved at coverage entry, after success or a returned build/report error. Temporary insertions preserve line numbers, but columns and byte offsets can change while measuring; use working copies and do not edit them concurrently. Recovery after forced process termination is still pending.
 
 Scope is a standalone crate with sources under `src/` and Cargo target entry files. Test identification reuses preprocessing's conservative `cfg` rules. Non-entry expression fragments are kept unchanged, including any code inside them; macros are not expanded, and unmarked helpers outside test-only modules cannot be inferred as test-only. The pinned nightly and cargo-llvm-cov version are required.
 
@@ -138,9 +138,11 @@ utgen gen -p <target-crate-path> --requirement --context
 | `-c, --context` | Include the focal function's context in the prompt. Default: off. |
 | `-o, --oracle` | Use separate input-range, test-prefix, and oracle generation. Default: off; otherwise generate complete tests directly. |
 | `-i, --integration` | Generate integration tests under `tests/`, using the analysis visibility flag to select functions and compilation checks to filter candidates. Default: off. |
-| `-t, --tasks` | Default: 128. Currently sizes the result channel and does not enforce a strict limit on concurrent LLM requests. |
+| `-t, --tasks` | Default: 4. Maximum active focal-function generation jobs; must be positive. |
 
 Generation validates the branch index, context index, context files, and source paths before modifying the target. Missing or inconsistent artifacts are errors. A failed generation task is reported instead of being silently lost before statistics. `--tasks 0` is rejected.
+
+Each generation job handles one focal function, including its condition chains and input/prefix/oracle stages sequentially. It holds a slot until its result enters the bounded queue, which also has capacity N. A single consumer validates candidates and their imports while other jobs can await model responses. Thus N limits active generation jobs, not the number of compiler processes or Cargo's internal build jobs; buffered results and the candidate currently being validated are separate.
 
 Generation may append an `ntest` dependency to the target's Cargo.toml. Existing `utgen/generation/pre_fix/<encoded>.json` results are skipped, so use a fresh target copy for a different model, prompt, or generation mode.
 
@@ -150,7 +152,11 @@ Generation may append an `ntest` dependency to the target's Cargo.toml. Existing
 utgen fix -p <target-crate-path>
 ```
 
-Repair reads the generated candidates and uses compiler diagnostics to revise those that fail compilation. It does not target runtime assertion failures. The command currently accepts `--tasks`, but that value is not passed to the repair scheduler.
+Repair reads the generated candidates and uses compiler diagnostics to revise those that fail compilation. It does not target runtime assertion failures. `--tasks N` defaults to 4 and limits active focal-function repair jobs through result saving. Each job processes its candidates and repair rounds sequentially.
+
+Source insertion, target cleanup, compilation/test execution, diagnostic reading, and source restoration are serialized within each command. Model requests may overlap. Cargo retains its own dependency-build parallelism. Concurrent PALM commands or experiments require separate working copies and separate target directories.
+
+All workers are joined before cleanup. A task panic or infrastructure error returns a nonzero status and skips subsequent coverage statistics; candidate compilation errors remain ordinary repair outcomes. Repair restores its source backups before returning, deletes only backups created by that invocation on success, and retains them after a worker failure. Existing source backups are rejected without overwriting them. Temporary import/candidate files are restored or removed after validation, including unwinding. This is not recovery from forced process termination, and request/subprocess deadlines remain unchanged.
 
 There is no integration-mode option for repair. Candidates are inserted into source files as unit tests, and post-repair statistics use that same mode. Do not interpret `gen --integration` followed by `fix` as preserving an integration-only evaluation.
 

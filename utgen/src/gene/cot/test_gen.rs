@@ -2,7 +2,6 @@ use super::Prompt;
 use super::LLM;
 use super::{extract_test_functions, try_parse};
 use crate::types::{ChainTestAnswer, TestInfo};
-use crate::utils::use_check;
 use log::{error, info};
 use rand::Rng;
 use std::collections::HashSet;
@@ -19,8 +18,6 @@ fn postprocess(inputs: &mut Vec<String>) {
 
 pub async fn gen_test(
     llm: &LLM,
-    // project_dir: &Path,
-    work_dir: &Path,
     answer_dir: &Path,
     pt_info: &Prompt,
     id: usize,
@@ -100,7 +97,6 @@ pub async fn gen_test(
             let mut use_set = codes.uses.into_iter().collect::<HashSet<String>>();
             if integration {
                 use_set.remove("use super::*;");
-                use_check(&mut use_set, work_dir);
             }
             test_answer_list.push(ChainTestAnswer::new(
                 use_set.into_iter().collect(),

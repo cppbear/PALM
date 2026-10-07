@@ -1,3 +1,4 @@
+use super::TemporaryFile;
 use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
@@ -23,9 +24,7 @@ pub fn cargo_check(work_dir: &Path) -> Result<(), String> {
 
 pub fn use_check(use_set: &mut HashSet<String>, work_dir: &Path) {
     let path = work_dir.join("tests/use_check.rs");
-    if path.exists() {
-        fs::remove_file(&path).unwrap();
-    }
+    let temporary = TemporaryFile::new(&path).unwrap();
     fs::create_dir_all(&path.parent().unwrap()).unwrap();
 
     use_set.retain(|x| {
@@ -33,4 +32,5 @@ pub fn use_check(use_set: &mut HashSet<String>, work_dir: &Path) {
         fs::write(&path, code).unwrap();
         cargo_check(&work_dir).is_ok()
     });
+    temporary.finish().unwrap();
 }
