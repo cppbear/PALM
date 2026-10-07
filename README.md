@@ -70,6 +70,17 @@ Use `utgen pre-process`, `utgen gen`, and `utgen fix` for preprocessing, generat
 
 See the [bytes example](examples/README.md) and [utgen usage](utgen/README.md) for the commands and result locations.
 
+## Development checks
+
+From the repository root, using the pinned toolchain:
+
+```sh
+cargo build --workspace --locked
+cargo test --workspace --locked
+```
+
+Default tests use local model-response fixtures and do not contact a model service. The real-service test is opt-in; see [utgen testing](utgen/README.md#testing). Dependency downloads may still require network access. [Build validation](docs/build-validation.md) records the baseline and checks performed; the GitHub Actions workflow runs the basic checks on Linux.
+
 ## Documentation
 
 - [Technical guide in Chinese](docs/palm-rust-unit-test-generation.md): architecture, data flow, and usage.
