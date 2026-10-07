@@ -11,6 +11,7 @@ cargo build --workspace --locked
 cargo +stable install cargo-llvm-cov --version 0.6.16 --locked
 python3 scripts/check_coverage.py
 python3 scripts/check_minimal.py
+python3 scripts/check_tasks.py
 ```
 
 No model credentials are required. The model endpoint is a temporary loopback HTTP server owned by the script; target commands receive only a dummy key. Dependency downloads may require network access.
@@ -47,7 +48,7 @@ The preprocessor parses `cfg` predicates conservatively, preserves `cfg(not(test
 
 Recursive context lookup now resolves full function names through the compiler's encoded-name index and consumes the accumulated dependencies. External functions without local artifacts remain outside this source context.
 
-The local macOS/Apple Silicon run passed using six generation responses and one repair response. Real-model behavior, bytes-scale execution, general multi-crate support, request concurrency limits, hard process timeouts, recovery after forced termination, and explicit run/resume behavior remain later work. Git history is retained.
+The local macOS/Apple Silicon run passed using six generation responses and one repair response. Real-model behavior, bytes-scale execution, general multi-crate support, hard process timeouts, recovery after forced termination, and explicit run/resume behavior remain later work. Git history is retained.
 
 The coverage entry temporarily annotates sources with `#[coverage(off)]` and enables the nightly feature at crate roots without adding newlines. It preserves compiler flags, restores original bytes on returned errors, and performs no hashing or source fingerprint checks. `cargo llvm-cov report --json` reuses the first run's data; the first XML-producing command retains the tool's normal profile cleanup between candidates. This does not provide crash recovery or general macro expansion. See the [coverage command reference](../utgen/README.md#coverage-of-existing-tests) for scope.
 
@@ -56,3 +57,9 @@ The coverage entry temporarily annotates sources with `#[coverage(off)]` and ena
 `scripts/check_coverage.py` exercises 11 small standalone crates, without a model service or extra crate dependencies. It covers existing coverage attributes, `cfg_attr(test, ...)`, compound/nested conditions with Cargo features enabled and disabled, test-only methods and impls, file-level test modules, and an expression used by `include!`. Each case has an integration test so both normal-library and test-harness builds are checked. It compares execution outcomes, checks raw production-only coverage, verifies source restoration, and confirms preprocessing leaves no original tests while preserving byte offsets. A custom target entry containing an expression is rejected by both commands.
 
 The script runs in Linux CI. Coverage and preprocessing share only source parsing and test predicates; they keep separate edit visitors. Coverage attributes and their feature gate are added under the complement of existing conditions, without a cfg evaluator or compiler-flag overrides. Explicit `coverage(on)` remains an intentional opt-in. Expression fragments are preserved, without macro expansion or automatic test exclusion inside those fragments.
+
+## Task Scheduling Regression
+
+`scripts/check_tasks.py` uses nine focal functions sharing one source file, a loopback model, and real Cargo commands. It measures generation and repair request peaks for N=1, N=2, and the default N=4, requires overlap for N>1, and checks that compiler invocations never overlap or observe changing source bytes. A paused compiler lets the N=1 generation queue fill: one candidate is being validated, one result is buffered, and one active job waits to send. Releasing compilation must drain every result.
+
+The same check covers direct and input/prefix/oracle integration generation, removal of invalid imports from saved candidates, and preservation/removal of temporary compiler inputs. Integration coverage reports remain available until every function has been read, and all nine functions must have passing tests and nonzero covered lines. Missing usage in one fixture response exercises worker-panic propagation and slot release; a stale generation backup exercises queue draining after consumer failure, and blocking the diagnostic output file exercises failure while the repair lock is held. Sources must be restored, failed repair backups retained, unrelated backups untouched, existing recovery material rejected, and post-failure statistics skipped. These checks use byte comparisons without hashing and run on macOS/Linux. CLI tests separately verify the default and rejection of zero before configuration loading.

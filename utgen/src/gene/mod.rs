@@ -13,9 +13,10 @@ use log::{error, info, warn};
 use prompt::{Prompt, inputprompts, oracleprompts, prefixprompts, testprompts};
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 use std::{fs, io};
 use test_ext::{extract_test_functions, try_parse};
-use tokio::sync::mpsc;
+use tokio::sync::{Semaphore, mpsc};
 
 pub use llm::LLM;
 
@@ -65,10 +66,12 @@ pub async fn gen_tests_project(
     context: bool,
     oracle: bool,
 ) -> io::Result<()> {
-    validate_analysis(project_dir, work_dir)?;
-    if tasks == 0 {
-        return Err(io::Error::other("--tasks must be greater than zero"));
+    if tasks == 0 || tasks > Semaphore::MAX_PERMITS {
+        return Err(io::Error::other(
+            "--tasks is outside the supported positive range",
+        ));
     }
+    validate_analysis(project_dir, work_dir)?;
     add_ntest_dependency(work_dir);
     let brdata_dir = work_dir.join("brinfo/brdata");
     let map_path = work_dir.join("brinfo/name_map.json");
@@ -80,6 +83,7 @@ pub async fn gen_tests_project(
             serde_json::from_str(&fs::read_to_string(&focxt_name_informations_path).unwrap())
                 .unwrap();
         let (tx, mut rx) = mpsc::channel(tasks);
+        let slots = Arc::new(Semaphore::new(tasks));
         let mut handles = Vec::new();
         for entry in fs::read_dir(brdata_dir).unwrap() {
             let entry = entry.unwrap();
@@ -118,7 +122,11 @@ pub async fn gen_tests_project(
                 let project_dir = project_dir.to_path_buf();
                 let work_dir = work_dir.to_path_buf();
                 let llm = llm.clone();
+                let slots = slots.clone();
                 handles.push(tokio::spawn(async move {
+                    // Wait inside the task so the producer loop cannot block
+                    // the result consumer. Hold the slot through result delivery.
+                    let _permit = slots.acquire_owned().await.map_err(io::Error::other)?;
                     generation_task(
                         llm,
                         brdata,
@@ -137,24 +145,46 @@ pub async fn gen_tests_project(
             }
         }
         drop(tx);
+        let mut failure = None;
         while let Some(mut test_gen_info) = rx.recv().await {
+            if failure.is_some() {
+                continue; // Drain results so senders can finish and release slots.
+            }
             let fn_name = test_gen_info.get_name().to_string();
             info!("Checking tests for {}", fn_name);
-            if integration {
-                check_integration(&mut test_gen_info, work_dir);
-            } else {
-                check_unit(&mut test_gen_info, project_dir, work_dir);
-            }
             let file_path = project_dir.join(format!(
                 "utgen/generation/pre_fix/{}.json",
                 nmap.get(&fn_name).unwrap()
             ));
-            test_gen_info.dump_json(&file_path);
+            let project_dir = project_dir.to_owned();
+            let work_dir = work_dir.to_owned();
+            // Await exactly one validation at a time, without blocking model tasks.
+            let checked = tokio::task::spawn_blocking(move || {
+                if integration {
+                    check_integration(&mut test_gen_info, &work_dir);
+                } else {
+                    check_unit(&mut test_gen_info, &project_dir, &work_dir);
+                }
+                test_gen_info.dump_json(&file_path);
+            })
+            .await;
+            if let Err(error) = checked {
+                failure = Some(io::Error::other(format!(
+                    "Validation failed for {fn_name}: {error}"
+                )));
+            }
         }
         for handle in handles {
-            handle
+            let result = handle
                 .await
-                .map_err(|e| io::Error::other(format!("Generation task failed: {e}")))??;
+                .map_err(|e| io::Error::other(format!("Generation task failed: {e}")))
+                .and_then(|result| result);
+            if let Err(error) = result {
+                failure.get_or_insert(error);
+            }
+        }
+        if let Some(error) = failure {
+            return Err(error);
         }
     } else {
         return Err(io::Error::other(format!(

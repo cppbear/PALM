@@ -1,57 +1,108 @@
-use std::{fs, path::Path};
-use walkdir::WalkDir;
+use std::{
+    fs,
+    io::{self, Write},
+    path::{Path, PathBuf},
+};
 
-pub fn has_backup(file_path: &Path) -> bool {
-    let backup_path = file_path.with_extension(format!(
+fn backup_path(path: &Path) -> PathBuf {
+    path.with_extension(format!(
         "{}.bak",
-        file_path
-            .extension()
-            .unwrap_or_default()
-            .to_str()
-            .unwrap_or_default()
-    ));
-    return fs::exists(backup_path).unwrap();
+        path.extension().unwrap_or_default().to_string_lossy()
+    ))
 }
 
-pub fn delete_backup(file_path: &Path) {
-    let backup_path = file_path.with_extension(format!(
-        "{}.bak",
-        file_path
-            .extension()
-            .unwrap_or_default()
-            .to_str()
-            .unwrap_or_default()
-    ));
-    fs::remove_file(backup_path).unwrap();
+pub fn has_backup(path: &Path) -> bool {
+    backup_path(path).exists()
+}
+
+pub fn delete_backup(path: &Path) {
+    fs::remove_file(backup_path(path)).unwrap();
+}
+
+/// Create only a new backup; never replace a previous run's recovery material.
+pub(crate) fn create_backup(path: &Path) -> io::Result<PathBuf> {
+    let original = fs::read(path)?;
+    let backup = backup_path(path);
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&backup)?;
+    file.write_all(&original)?;
+    file.set_permissions(fs::metadata(path)?.permissions())?;
+    Ok(backup)
 }
 
 pub fn backup_file(path: &Path) {
-    let backup_path = path.with_extension(format!(
-        "{}.bak",
-        path.extension()
-            .unwrap_or_default()
-            .to_str()
-            .unwrap_or_default()
-    ));
-    fs::copy(path, &backup_path).expect(format!("{:?}", path).as_str());
+    create_backup(path).expect("cannot create source backup; check for an existing .bak file");
 }
 
 pub fn restore_file(path: &Path) {
-    let backup_path = path.with_extension(format!(
-        "{}.bak",
-        path.extension()
-            .unwrap_or_default()
-            .to_str()
-            .unwrap_or_default()
-    ));
-    fs::copy(&backup_path, path).unwrap();
+    fs::copy(backup_path(path), path).unwrap();
 }
 
-pub fn delete_all_backups(work_path: &Path) {
-    for entry in WalkDir::new(work_path).into_iter().filter_map(Result::ok) {
-        let path = entry.path();
-        if path.is_file() && path.extension().unwrap_or_default() == "rs" && has_backup(path) {
-            delete_backup(path);
+/// Restore before a validation panic releases its compilation lock. Keep the
+/// on-disk backup on failure; normal callers delete it after successful checks.
+pub(crate) struct RestoreOnDrop<'a>(pub &'a Path);
+
+impl Drop for RestoreOnDrop<'_> {
+    fn drop(&mut self) {
+        if let Err(error) = fs::copy(backup_path(self.0), self.0) {
+            log::error!(
+                "Cannot restore {}: {error}; backup retained",
+                self.0.display()
+            );
+        }
+    }
+}
+
+/// Own a temporary compiler input, restoring any pre-existing content.
+pub(crate) struct TemporaryFile {
+    path: PathBuf,
+    original: Option<Vec<u8>>,
+    finished: bool,
+}
+
+impl TemporaryFile {
+    pub fn new(path: &Path) -> io::Result<Self> {
+        let original = match fs::read(path) {
+            Ok(bytes) => Some(bytes),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error),
+        };
+        Ok(Self {
+            path: path.to_owned(),
+            original,
+            finished: false,
+        })
+    }
+
+    fn restore(&self) -> io::Result<()> {
+        if let Some(bytes) = &self.original {
+            fs::write(&self.path, bytes)
+        } else {
+            match fs::remove_file(&self.path) {
+                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+                result => result,
+            }
+        }
+    }
+
+    pub fn finish(mut self) -> io::Result<()> {
+        self.restore()?;
+        self.finished = true;
+        Ok(())
+    }
+}
+
+impl Drop for TemporaryFile {
+    fn drop(&mut self) {
+        if !self.finished {
+            if let Err(error) = self.restore() {
+                log::error!(
+                    "Cannot restore temporary file {}: {error}",
+                    self.path.display()
+                );
+            }
         }
     }
 }

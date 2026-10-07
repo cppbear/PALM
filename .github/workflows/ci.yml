@@ -42,3 +42,5 @@ jobs:
         run: python3 scripts/check_coverage.py
       - name: Validate the minimal analysis and test pipeline
         run: python3 scripts/check_minimal.py
+      - name: Check generation and repair task limits
+        run: python3 scripts/check_tasks.py

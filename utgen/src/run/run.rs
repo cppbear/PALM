@@ -381,6 +381,9 @@ pub fn gen_test_rate(project_dir: &Path, work_dir: &Path, integration: bool, is_
                 }
             }
         }
+        // Every integration function reads the same coverage run.
+        fs::remove_file(work_dir.join("coverage.xml")).unwrap();
+        fs::remove_file(work_dir.join("coverage.json")).unwrap();
         for integration_info in integration_infos.iter() {
             let mut tests = integration_info.test_function_names.len() as i32;
             let mut passed_tests = 0;
@@ -571,7 +574,6 @@ fn gen_one_coverage_rate_lines(
         // test_rate_info.branches_coverage_rate = branches_coverage_rate;
         test_rate_info.codes_lines = codes_lines;
         // test_rate_info.codes_branches = codes_branches;
-        remove_file(&coverage_file_path).unwrap();
     }
 }
 
@@ -665,8 +667,6 @@ fn gen_one_coverage_rate_branches(
     test_rate_info.branches_covered = branches_covered;
     test_rate_info.branches_coverage_rate = branches_coverage_rate;
     test_rate_info.codes_branches = codes_branches;
-
-    fs::remove_file(&coverage_file_path).unwrap();
 }
 
 fn gen_one_pass_rate(test_output: &String) -> (i32, i32, f64) {

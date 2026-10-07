@@ -1,8 +1,8 @@
 use clap::{Args, Parser, Subcommand};
 use log::info;
 use simplelog::{ColorChoice, ConfigBuilder, LevelFilter, TermLogger, TerminalMode};
-use std::env;
 use std::path::PathBuf;
+use std::{env, num::NonZeroUsize};
 use utgen::{LLM, LlmConfig, analyze_project, collect_coverage, validate_repair};
 use utgen::{comment_out_tests, gen_test_rate, gen_tests_project, llm_fix, rename_tests_to_bak};
 
@@ -38,9 +38,9 @@ enum Command {
     Gen {
         #[command(flatten)]
         options: Opts,
-        /// Number of parallel test generation tasks
-        #[arg(short, long, default_value = "128")]
-        tasks: usize,
+        /// Maximum active function-generation tasks; compilation stays serial
+        #[arg(short, long, default_value = "4")]
+        tasks: NonZeroUsize,
         /// Whether to generate integration tests
         #[arg(short, long)]
         integration: bool,
@@ -58,9 +58,9 @@ enum Command {
     Fix {
         #[command(flatten)]
         options: Opts,
-        /// Number of parallel test fix tasks
-        #[arg(short, long, default_value = "128")]
-        tasks: usize,
+        /// Maximum active function-repair tasks; compilation stays serial
+        #[arg(short, long, default_value = "4")]
+        tasks: NonZeroUsize,
     },
 }
 
@@ -180,7 +180,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     &llm,
                     &project_dir,
                     &work_dir,
-                    tasks,
+                    tasks.get(),
                     integration,
                     requirement,
                     context,
@@ -204,7 +204,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
             for work_dir in work_dirs.iter() {
                 validate_repair(&project_dir, work_dir)?;
-                llm_fix(&llm, project_dir.clone(), work_dir.clone()).await;
+                llm_fix(&llm, project_dir.clone(), work_dir.clone(), tasks.get()).await?;
             }
             //gen_test_rate_aggregated(&project_dir, false);
             for work_dir in work_dirs.iter() {
