@@ -209,6 +209,14 @@ impl ModContext {
         self.lib_mod = Some(Rc::clone(lib_mod));
     }
 
+    pub fn bind_compiler_functions(&mut self, infos: &[ImplInformation]) {
+        self.syntax_context
+            .bind_compiler_functions(&self.mod_info.get_mod_tree().to_string(), infos);
+        for context in &self.sub_mods {
+            context.borrow_mut().bind_compiler_functions(infos);
+        }
+    }
+
     pub fn parse_from_items(
         parent: &Rc<RefCell<ModContext>>,
         items: &Vec<Item>,

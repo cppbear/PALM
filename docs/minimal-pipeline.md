@@ -48,7 +48,7 @@ The preprocessor parses `cfg` predicates conservatively, preserves `cfg(not(test
 
 Recursive context lookup now resolves full function names through the compiler's encoded-name index and consumes the accumulated dependencies. External functions without local artifacts remain outside this source context.
 
-The local macOS/Apple Silicon run passed using six generation responses and one repair response. Real-model behavior, bytes-scale execution, general multi-crate support, hard process timeouts, recovery after forced termination, and explicit run/resume behavior remain later work. Git history is retained.
+The local macOS/Apple Silicon run passed using six generation responses and one repair response. The [bytes analysis check](bytes-analysis.md) separately validates the larger target without a model. Real-model behavior, full bytes generation/repair, general multi-crate support, hard process timeouts, recovery after forced termination, and explicit run/resume behavior remain later work. Git history is retained.
 
 The coverage entry temporarily annotates sources with `#[coverage(off)]` and enables the nightly feature at crate roots without adding newlines. It preserves compiler flags, restores original bytes on returned errors, and performs no hashing or source fingerprint checks. `cargo llvm-cov report --json` reuses the first run's data; the first XML-producing command retains the tool's normal profile cleanup between candidates. This does not provide crash recovery or general macro expansion. See the [coverage command reference](../utgen/README.md#coverage-of-existing-tests) for scope.
 

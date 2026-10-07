@@ -1,5 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
+use call_chain::analysis::hirvisitor::ImplInformation;
 use quote::ToTokens;
 use syn::{
     ImplItemConst, ImplItemFn, ImplItemType, Item, ItemConst, ItemEnum, ItemFn, ItemImpl,
@@ -751,6 +752,7 @@ impl TypeItem {
 #[derive(Debug, Clone)]
 pub struct FnItem {
     fn_name: Name,
+    encoded_name: Option<String>,
     complete_name_in_file: String,
     item: Option<ItemFn>,
     // has_items: bool,
@@ -763,6 +765,7 @@ impl FnItem {
     pub fn new() -> Self {
         FnItem {
             fn_name: Name::none(),
+            encoded_name: None,
             complete_name_in_file: String::new(),
             // complete_function_name_in_file: String::new(),
             item: None,
@@ -821,6 +824,16 @@ impl FnItem {
         self.fn_name.get_name()
     }
 
+    pub fn bind_compiler_info(&mut self, info: &ImplInformation) {
+        self.fn_name.insert_complete_name(&info.full_name);
+        self.fn_name.insert_import_name(&info.full_name);
+        self.encoded_name = Some(info.encoded_name.clone());
+    }
+
+    pub fn get_encoded_name(&self) -> Option<String> {
+        self.encoded_name.clone()
+    }
+
     pub fn get_complete_name(&self) -> String {
         self.fn_name.get_import_name().to_string()
     }
@@ -852,6 +865,10 @@ impl FnItem {
 
     pub fn to_item(&self) -> Item {
         Item::Fn(self.item.clone().unwrap())
+    }
+
+    pub fn get_item(&self) -> &ItemFn {
+        self.item.as_ref().unwrap()
     }
 
     pub fn insert_visibility(&mut self, visibility: MyVisibility) {
@@ -922,6 +939,7 @@ impl ImplConstItem {
 #[derive(Debug, Clone)]
 pub struct ImplFnItem {
     fn_name: Name,
+    encoded_name: Option<String>,
     complete_name_in_file: String,
     item: Option<ImplItemFn>,
     // has_items: bool,
@@ -934,6 +952,7 @@ impl ImplFnItem {
     pub fn new() -> Self {
         ImplFnItem {
             fn_name: Name::none(),
+            encoded_name: None,
             complete_name_in_file: String::new(),
             item: None,
             inside_items: Vec::new(),
@@ -1040,6 +1059,16 @@ impl ImplFnItem {
 
     pub fn get_name(&self) -> String {
         self.fn_name.get_name()
+    }
+
+    pub fn bind_compiler_info(&mut self, info: &ImplInformation) {
+        self.fn_name.insert_complete_name(&info.full_name);
+        self.fn_name.insert_import_name(&info.full_name);
+        self.encoded_name = Some(info.encoded_name.clone());
+    }
+
+    pub fn get_encoded_name(&self) -> Option<String> {
+        self.encoded_name.clone()
     }
 
     pub fn get_complete_name(&self) -> String {
@@ -1170,6 +1199,10 @@ impl ImplItem {
                 .push(syn::ImplItem::Fn(impl_fn_item.get_item()));
         }
         Item::Impl(item_impl)
+    }
+
+    pub fn get_fns_mut(&mut self) -> &mut Vec<ImplFnItem> {
+        &mut self.functions
     }
 
     pub fn get_fns(&self) -> &Vec<ImplFnItem> {
@@ -1510,6 +1543,7 @@ impl TraitConstItem {
 #[derive(Debug, Clone)]
 pub struct TraitFnItem {
     fn_name: Name,
+    encoded_name: Option<String>,
     complete_name_in_file: String,
     item: Option<TraitItemFn>,
     // has_items: bool,
@@ -1521,6 +1555,7 @@ impl TraitFnItem {
     pub fn new() -> Self {
         TraitFnItem {
             fn_name: Name::none(),
+            encoded_name: None,
             complete_name_in_file: String::new(),
             item: None,
             inside_items: Vec::new(),
@@ -1582,6 +1617,16 @@ impl TraitFnItem {
 
     pub fn get_name(&self) -> String {
         self.fn_name.get_name()
+    }
+
+    pub fn bind_compiler_info(&mut self, info: &ImplInformation) {
+        self.fn_name.insert_complete_name(&info.full_name);
+        self.fn_name.insert_import_name(&info.full_name);
+        self.encoded_name = Some(info.encoded_name.clone());
+    }
+
+    pub fn get_encoded_name(&self) -> Option<String> {
+        self.encoded_name.clone()
     }
 
     pub fn get_complete_name(&self) -> String {
@@ -1695,6 +1740,10 @@ impl TraitItem {
                 .push(syn::TraitItem::Fn(trait_fn_item.get_item()));
         }
         Item::Trait(item_trait)
+    }
+
+    pub fn get_fns_mut(&mut self) -> &mut Vec<TraitFnItem> {
+        &mut self.functions
     }
 
     pub fn get_fns(&self) -> &Vec<TraitFnItem> {

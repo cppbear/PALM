@@ -70,7 +70,7 @@ On a fresh working copy of a standalone crate, run `utgen pre-process -p <target
 
 Then use `utgen gen` and `utgen fix` for generation and compilation repair. Pass `--requirement --context` to `utgen gen` to include path constraints and focal context. Preprocessing and test checks modify the target tree; use a working copy of the target project.
 
-Start with the [minimal pipeline check](docs/minimal-pipeline.md), which uses fixed local model responses and verifies analysis, generation, repair, source restoration, and coverage. The [bytes example](examples/README.md) remains a larger follow-up target. See [utgen usage](utgen/README.md) for command details.
+Start with the [minimal pipeline check](docs/minimal-pipeline.md), which uses fixed local model responses and verifies analysis, generation, repair, source restoration, and coverage. The [bytes analysis check](docs/bytes-analysis.md) validates the larger bundled target; model-based generation and repair on bytes remain the next stage. See [utgen usage](utgen/README.md) for command details.
 
 ## Development checks
 

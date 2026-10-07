@@ -43,6 +43,7 @@ fn main() {
 
     crate_context.parse_crate();
     crate_context.change_all_names();
+    crate_context.bind_compiler_functions(&impl_informations);
 
     let mut mod_trees: HashSet<String> = HashSet::new();
     crate_context.cout_all_mod_trees_in_one_file_for_test(&mut mod_trees);

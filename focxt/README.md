@@ -22,3 +22,5 @@ Options:
 ```
 
 `focxt -c crate_path` or `focxt --crate crate_path`
+
+Function contexts use call-chain's compiler identities and source positions, including distinct generic trait impls and reference receivers. Recoverable macro-generated method bodies are associated with their enclosing source impl; this is not general macro expansion. Rebuild focxt and call-chain together. See the [bytes analysis validation](../docs/bytes-analysis.md) for release builds, reproducible checks, and current limits.

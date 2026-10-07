@@ -2,7 +2,7 @@ use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
     fs::{create_dir_all, File},
-    io::{Read, Write},
+    io::{BufReader, Read, Write},
     path::PathBuf,
     process::exit,
     rc::Rc,
@@ -18,8 +18,6 @@ use syn::{
     Attribute, Expr, Fields, FieldsNamed, GenericParam, Generics, Item, ItemTrait, Lit, Meta, Path,
     Stmt, Type, TypeParamBound, UseTree as SynUseTree, Visibility,
 };
-
-use crate::utils::get_encoded_name;
 
 use super::{
     crate_context::CrateContext,
@@ -525,7 +523,7 @@ fn get_syntax_recursively(
         };
         let call_file = output_path.join("new_callsandtypes").join(format!("{}.json", info.encoded_name));
         if let Ok(file) = File::open(call_file) {
-            let new_data: CallsAndTypes = serde_json::from_reader(file).unwrap();
+            let new_data: CallsAndTypes = serde_json::from_reader(BufReader::new(file)).unwrap();
             remain_calls.extend(new_data.calls.iter().filter(|name| !already_calls.contains(*name)).cloned());
             end_data.add_data(&new_data);
         }
@@ -993,6 +991,74 @@ impl SyntaxContext {
         syntax.statics = self.statics.clone();
         syntax.types = self.types.clone();
         syntax
+    }
+
+    pub fn bind_compiler_functions(&mut self, mod_tree: &str, infos: &[ImplInformation]) {
+        let infos: Vec<_> = infos
+            .iter()
+            .filter(|info| info.mod_name == mod_tree)
+            .collect();
+        let matches_function = |info: &ImplInformation, ident: &syn::Ident| {
+            let point = ident.span().start();
+            let point = (point.line, point.column + 1);
+            info.fn_name == ident.to_string()
+                && (info.loc.get_startline(), info.loc.get_startcolumn()) <= point
+                && point < (info.loc.get_endline(), info.loc.get_endcolumn())
+        };
+        for function in &mut self.functions {
+            if let Some(info) = infos.iter().find(|info| {
+                info.impl_loc.is_none() && matches_function(info, &function.get_item().sig.ident)
+            }) {
+                function.bind_compiler_info(info);
+            }
+        }
+        for item in &mut self.impls {
+            // Match the impl token against rustc's header span, retaining the
+            // receiver type and generic-trait instance as part of its identity.
+            let point = item.get_item().impl_token.span.start();
+            let point = (point.line, point.column + 1);
+            for info in infos.iter().filter(|info| {
+                info.impl_loc.as_ref().is_some_and(|loc| {
+                    (loc.get_startline(), loc.get_startcolumn()) <= point
+                        && point < (loc.get_endline(), loc.get_endcolumn())
+                })
+            }) {
+                if let Some(function) = item
+                    .get_fns_mut()
+                    .iter_mut()
+                    .find(|function| matches_function(info, &function.get_item().sig.ident))
+                {
+                    function.bind_compiler_info(info);
+                } else {
+                    // rustc already selected this method and recovered parseable
+                    // source from its macro definition; no macro expansion here.
+                    let parsed: syn::ImplItemFn = syn::parse_str(&info.code).unwrap();
+                    let mut function = ImplFnItem::new();
+                    function.insert_fn_name(&info.fn_name);
+                    function
+                        .insert_complete_name_in_file(&format!("{{impl#{}}}", item.get_impl_num()));
+                    function.insert_visibility(parse_visibility(&parsed.vis));
+                    function.insert_item(&parsed);
+                    function.bind_compiler_info(info);
+                    item.insert_function(&function);
+                }
+            }
+            item.get_fns_mut()
+                .retain(|function| function.get_encoded_name().is_some());
+        }
+        for item in &mut self.traits {
+            for function in item.get_fns_mut() {
+                if let Some(info) = infos.iter().find(|info| {
+                    info.impl_loc.is_none()
+                        && matches_function(info, &function.get_item().sig.ident)
+                }) {
+                    function.bind_compiler_info(info);
+                }
+            }
+            item.get_fns_mut().retain(|function| {
+                function.get_item().default.is_none() || function.get_encoded_name().is_some()
+            });
+        }
     }
 
     pub fn from_items(items: &Vec<Item>) -> Self {
@@ -1544,7 +1610,11 @@ impl SyntaxContext {
         fns: &mut HashMap<String, FnData>,
         structs: &mut HashMap<String, StructData>,
     ) {
-        for function_item in self.functions.iter() {
+        for function_item in self
+            .functions
+            .iter()
+            .filter(|function| function.get_encoded_name().is_some())
+        {
             let fn_data = FnData {
                 fn_name: function_item.get_name(),
                 complete_fn_name: function_item.get_complete_name(),
@@ -1555,7 +1625,11 @@ impl SyntaxContext {
         for impl_item in self.impls.iter() {
             let mut empty_impl_item = impl_item.clone();
             empty_impl_item.clear();
-            for function_item in impl_item.get_fns().iter() {
+            for function_item in impl_item
+                .get_fns()
+                .iter()
+                .filter(|function| function.get_encoded_name().is_some())
+            {
                 let fn_data = FnData {
                     fn_name: function_item.get_name(),
                     complete_fn_name: function_item.get_complete_name(),
@@ -1567,7 +1641,11 @@ impl SyntaxContext {
         for trait_item in self.traits.iter() {
             let mut empty_trait_item = trait_item.clone();
             empty_trait_item.clear();
-            for function_item in trait_item.get_fns().iter() {
+            for function_item in trait_item
+                .get_fns()
+                .iter()
+                .filter(|function| function.get_encoded_name().is_some())
+            {
                 let fn_data = FnData {
                     fn_name: function_item.get_name(),
                     complete_fn_name: function_item.get_complete_name(),
@@ -1871,13 +1949,7 @@ impl SyntaxContext {
         crate_context: &CrateContext,
     ) {
         for function_item in self.functions.iter() {
-            let encoded_name = get_encoded_name(
-                impl_informations,
-                mod_tree,
-                &function_item.get_name(),
-                &"".to_string(),
-                &"".to_string(),
-            );
+            let encoded_name = function_item.get_encoded_name();
             let complete_function_name = function_item.get_complete_name();
             if let Some(encoded_name) = encoded_name {
                 let call_file =
@@ -1917,18 +1989,7 @@ impl SyntaxContext {
         }
         for impl_item in self.impls.iter() {
             for function_item in impl_item.get_fns().iter() {
-                let trait_name = if *impl_item.get_trait_name() != None {
-                    &impl_item.get_trait_name().as_ref().unwrap().get_name()
-                } else {
-                    &"".to_string()
-                };
-                let encoded_name = get_encoded_name(
-                    impl_informations,
-                    mod_tree,
-                    &function_item.get_name(),
-                    &impl_item.get_struct_name().get_name(),
-                    trait_name,
-                );
+                let encoded_name = function_item.get_encoded_name();
                 let complete_function_name = function_item.get_complete_name();
                 if let Some(encoded_name) = encoded_name {
                     let call_file =
@@ -1998,13 +2059,7 @@ impl SyntaxContext {
         }
         for trait_item in self.traits.iter() {
             for function_item in trait_item.get_fns().iter() {
-                let encoded_name = get_encoded_name(
-                    impl_informations,
-                    mod_tree,
-                    &function_item.get_name(),
-                    &"".to_string(),
-                    &trait_item.get_trait_name().get_name(),
-                );
+                let encoded_name = function_item.get_encoded_name();
                 let complete_function_name = function_item.get_complete_name();
                 if let Some(encoded_name) = encoded_name {
                     let call_file =
@@ -2061,13 +2116,7 @@ impl SyntaxContext {
         crate_context: &CrateContext,
     ) {
         for function_item in self.functions.iter() {
-            let encoded_name = get_encoded_name(
-                impl_informations,
-                mod_tree,
-                &function_item.get_name(),
-                &"".to_string(),
-                &"".to_string(),
-            );
+            let encoded_name = function_item.get_encoded_name();
             let complete_function_name = function_item.get_complete_name();
             if let Some(encoded_name) = encoded_name {
                 let call_file =
@@ -2118,18 +2167,7 @@ impl SyntaxContext {
         }
         for impl_item in self.impls.iter() {
             for function_item in impl_item.get_fns().iter() {
-                let trait_name = if *impl_item.get_trait_name() != None {
-                    &impl_item.get_trait_name().as_ref().unwrap().get_name()
-                } else {
-                    &"".to_string()
-                };
-                let encoded_name = get_encoded_name(
-                    impl_informations,
-                    mod_tree,
-                    &function_item.get_name(),
-                    &impl_item.get_struct_name().get_name(),
-                    trait_name,
-                );
+                let encoded_name = function_item.get_encoded_name();
                 let complete_function_name = function_item.get_complete_name();
                 if let Some(encoded_name) = encoded_name {
                     let call_file = output_path
@@ -2208,13 +2246,7 @@ impl SyntaxContext {
         }
         for trait_item in self.traits.iter() {
             for function_item in trait_item.get_fns().iter() {
-                let encoded_name = get_encoded_name(
-                    impl_informations,
-                    mod_tree,
-                    &function_item.get_name(),
-                    &"".to_string(),
-                    &trait_item.get_trait_name().get_name(),
-                );
+                let encoded_name = function_item.get_encoded_name();
                 let complete_function_name = function_item.get_complete_name();
                 if let Some(encoded_name) = encoded_name {
                     let call_file = output_path
@@ -2248,11 +2280,11 @@ impl SyntaxContext {
                                 fns,
                                 structs,
                             );
-                            // let rs_file_name = encoded_name.clone() + ".rs";
-                            // let output_file_path = output_path.join(rs_file_name);
-                            // let mut file = File::create(output_file_path).unwrap();
-                            // file.write_all(syntax_context.to_string().as_bytes())
-                            //     .unwrap();
+                            let rs_file_name = encoded_name.clone() + ".rs";
+                            let output_file_path = output_path.join(rs_file_name);
+                            let mut file = File::create(output_file_path).unwrap();
+                            file.write_all(syntax_context.to_string().as_bytes())
+                                .unwrap();
 
                             // let directory_path = output_path.join("new_callsandtypes");
                             // create_dir_all(&directory_path).unwrap();
