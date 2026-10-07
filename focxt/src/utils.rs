@@ -43,22 +43,3 @@ pub fn read_impl_informations_from_json(crate_path: &PathBuf) -> Vec<ImplInforma
     }
     impl_informations
 }
-
-pub fn get_encoded_name(
-    impl_informations: &Vec<ImplInformation>,
-    mod_name: &String,
-    fn_name: &String,
-    struct_name: &String,
-    trait_name: &String,
-) -> Option<String> {
-    for impl_information in impl_informations.iter() {
-        if impl_information.mod_name.eq(mod_name)
-            && impl_information.fn_name.eq(fn_name)
-            && impl_information.struct_name.eq(struct_name)
-            && impl_information.trait_name.eq(trait_name)
-        {
-            return Some(impl_information.encoded_name.clone());
-        }
-    }
-    None
-}

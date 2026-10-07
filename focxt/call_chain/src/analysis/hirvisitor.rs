@@ -32,6 +32,9 @@ pub struct ImplInformation {
     pub trait_name: String,
     pub full_name: String,
     pub encoded_name: String,
+    pub loc: SourceInfo,
+    pub impl_loc: Option<SourceInfo>,
+    pub code: String,
 }
 
 pub struct VisitorData<'tcx> {
@@ -243,6 +246,11 @@ impl<'tcx> Visitor<'tcx> for HirVisitor<'tcx> {
             trait_name,
             full_name: full_name,
             encoded_name: encoded_name,
+            loc: fn_source.clone(),
+            impl_loc: matches!(parent_kind, DefKind::Impl { .. }).then(|| {
+                SourceInfo::from_span(self.tcx.def_span(parent_def_id), self.tcx.sess.source_map())
+            }),
+            code,
         };
 
         let data = VisitorData {

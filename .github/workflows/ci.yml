@@ -44,3 +44,7 @@ jobs:
         run: python3 scripts/check_minimal.py
       - name: Check generation and repair task limits
         run: python3 scripts/check_tasks.py
+      - name: Build release analysis tools
+        run: cargo build --workspace --release --locked
+      - name: Validate bytes analysis and method identities
+        run: python3 scripts/check_bytes.py

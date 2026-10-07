@@ -2,6 +2,8 @@
 
 Start with the [minimal pipeline](../docs/minimal-pipeline.md) for an automated, no-credentials validation. The commands below describe the larger bytes target; the complete pipeline is currently regression-tested on the minimal crate.
 
+The [bytes analysis check](../docs/bytes-analysis.md) now validates all 663 exported functions and their context artifacts on two fresh copies. Run `cargo build --workspace --release --locked` and `python3 scripts/check_bytes.py` from the repository root. Model-based generation and repair on bytes remain a separate validation stage.
+
 ## bytes
 
 The bundled target is [tokio-rs/bytes](https://github.com/tokio-rs/bytes), version 1.10.0. It is excluded from PALM's tool workspace and retains its own source files, tests, and license.
@@ -31,7 +33,7 @@ utgen pre-process -p "$palm_example_dir"
 utgen analyze -p "$palm_example_dir"
 ```
 
-Analysis runs brinfo and focxt (including call-chain) on the prepared source. If a function lacks corresponding context, generation reports the missing artifact; support for larger targets is still being validated.
+Analysis runs brinfo and focxt (including call-chain) on the prepared source, reports stage timings, and validates the resulting artifacts. If a function lacks corresponding context, the command reports the function and missing path.
 
 ### Generate and Repair Unit Tests
 

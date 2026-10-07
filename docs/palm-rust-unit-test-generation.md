@@ -635,7 +635,7 @@ utgen gen -p "$palm_example_dir" --requirement --context
 utgen fix -p "$palm_example_dir"
 ```
 
-切换到 integration、其他提示词或其他模型时，使用新的目标副本并重新分析，避免复用旧的生成缓存。更详细的示例见 [examples/README.md](../examples/README.md)。当前完整回归使用 [minimal 示例](minimal-pipeline.md)；bytes 的完整运行仍是后续验证项。
+切换到 integration、其他提示词或其他模型时，使用新的目标副本并重新分析，避免复用旧的生成缓存。更详细的示例见 [examples/README.md](../examples/README.md)。当前完整生成与修复回归使用 [minimal 示例](minimal-pipeline.md)。[bytes 分析验收](bytes-analysis.md) 已覆盖默认配置下导出的 663 个函数及其上下文；bytes 的真实模型生成、修复和覆盖率实验仍是后续验证项。
 
 完成后重点查看临时目标目录中的以下路径：
 

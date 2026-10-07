@@ -118,6 +118,12 @@ impl CrateContext {
         }
     }
 
+    pub fn bind_compiler_functions(&self, infos: &[ImplInformation]) {
+        for context in &self.main_mod_contexts {
+            context.borrow_mut().bind_compiler_functions(infos);
+        }
+    }
+
     pub fn get_all_new_calls_and_types(
         &self,
         impl_informations: &Vec<ImplInformation>,
