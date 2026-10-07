@@ -260,12 +260,12 @@ Rust 的一个核心挑战是 MIR 的去糖。比如高级语法 `match color` �
 
 ```text
 utgen pre-process --project-dir <PROJECT_DIR> [--work-dir <WORK_DIR>...]
-utgen analyze --project-dir <PROJECT_DIR> [--work-dir <WORK_DIR>...]
+utgen analyze --project-dir <STANDALONE_CRATE_DIR>
 utgen gen --project-dir <PROJECT_DIR> [--work-dir <WORK_DIR>...] [--tasks <N>] [--integration] [--requirement] [--context] [--oracle]
 utgen fix --project-dir <PROJECT_DIR> [--work-dir <WORK_DIR>...] [--tasks <N>]
 ```
 
-注意：`analyze` 子命令目前只打印日志，没有实际调用 `cargo brinfo` 或 `focxt`。实际运行时仍需要手动执行分析步骤。
+`analyze` 现在执行 `cargo clean`、`cargo brinfo` 和 `focxt`，随后核对分析索引及上下文文件。当前支持用 `-p` 指定单个独立 crate；目录中已有 `brinfo/` 或 `focxt/` 时会拒绝执行，应使用新的工作副本，避免混入旧分析结果。
 
 参数含义：
 
@@ -466,7 +466,7 @@ rustup component add --toolchain nightly-2025-03-19 rust-src rustc-dev llvm-tool
 安装覆盖率工具：
 
 ```sh
-cargo +stable install cargo-llvm-cov --locked
+cargo +stable install cargo-llvm-cov --version 0.6.16 --locked
 ```
 
 目标 crate 根目录建议包含：
@@ -523,24 +523,7 @@ focxt --help
 utgen --help
 ```
 
-### 10.3 对目标 crate 运行程序分析
-
-进入目标 crate 根目录，先提取条件链：
-
-```sh
-cargo clean
-cargo brinfo
-```
-
-然后构建上下文：
-
-```sh
-focxt -c <target-crate-path>
-```
-
-`focxt` 内部会运行 `cargo call-chain`，因此需要先安装 `focxt/call_chain`。
-
-### 10.4 预处理项目
+### 10.3 预处理项目
 
 ```sh
 utgen pre-process -p <target-crate-path>
@@ -554,10 +537,33 @@ utgen pre-process -p <project-root> -w <work-dir-1> -w <work-dir-2>
 
 预处理会：
 
-- 将已有 `tests` 目录重命名为 `tests.bak`。
-- 注释 `src` 下被识别为测试模块的模块，以及带 `#[test]` 或路径末段为 `test` 的属性的函数。
+- 将所选 crate 根目录的 `tests` 重命名为 `tests.bak`；已有备份不会被覆盖。
+- 将 `src` 中测试专属模块，以及带 `#[test]` 或路径末段为 `test` 的属性的函数替换为空白，保持换行和字节位置。
 
-模块识别使用 `cfg` 属性文本中是否包含 `test` 的判断，不是对任意条件编译表达式求值。预处理会修改目标项目源码树，且没有完整的反向预处理命令，建议在临时副本中运行。`-w` 的相对路径基于当前命令执行目录。
+模块识别解析 `cfg` 表达式，仅移除能确定在关闭 `test` 时不可用的模块；保留 `cfg(not(test))`，对未知 feature/target 条件保守处理。预处理修改目标项目源码树，没有完整的反向预处理命令，应在临时副本中运行。先预处理，再对准备好的源码分析；空白替换保持字节位置，UTF-8 字符列号仍应以处理后的源码为准。`-w` 的相对路径基于当前命令执行目录。
+
+### 10.4 对目标 crate 运行程序分析
+
+预处理后，推荐对新的独立 crate 副本执行：
+
+```sh
+utgen analyze -p <target-crate-path>
+```
+
+也可以手动进入准备好的目标 crate 根目录提取条件链。已有 `cargo check` 缓存可能使编译器包装器不执行，因此需要先清理：
+
+```sh
+cargo clean
+cargo brinfo
+```
+
+然后构建上下文：
+
+```sh
+focxt -c <target-crate-path>
+```
+
+`focxt` 内部会运行 `cargo call-chain`，因此需要先安装 `focxt/call_chain`。
 
 ### 10.5 生成测试
 
@@ -608,20 +614,18 @@ export PALM_CONFIG="$palm_repo/utgen/res/api.json"
 palm_example_dir="$(mktemp -d "${TMPDIR:-/tmp}/palm-bytes.XXXXXX")"
 cp -R "$palm_repo/examples/bytes/." "$palm_example_dir/"
 cd "$palm_example_dir"
-cargo clean
-cargo brinfo
-focxt -c "$palm_example_dir"
+utgen pre-process -p "$palm_example_dir"
+utgen analyze -p "$palm_example_dir"
 ```
 
 按单元测试模式生成和修复：
 
 ```sh
-utgen pre-process -p "$palm_example_dir"
 utgen gen -p "$palm_example_dir" --requirement --context
 utgen fix -p "$palm_example_dir"
 ```
 
-切换到 integration、其他提示词或其他模型时，使用新的目标副本并重新分析，避免复用旧的生成缓存。更详细的示例见 [examples/README.md](../examples/README.md)。
+切换到 integration、其他提示词或其他模型时，使用新的目标副本并重新分析，避免复用旧的生成缓存。更详细的示例见 [examples/README.md](../examples/README.md)。当前完整回归使用 [minimal 示例](minimal-pipeline.md)；bytes 的完整运行仍是后续验证项。
 
 完成后重点查看临时目标目录中的以下路径：
 
@@ -670,11 +674,11 @@ focxt/impl_informations.json
 focxt/<encoded>.rs
 ```
 
-缺少时按顺序重新运行：
+缺少或不一致时，生成器会在修改目标文件之前报错。请准备新的目标副本，再按顺序执行：
 
 ```sh
-cargo brinfo
-focxt -c <target-crate-path>
+utgen pre-process -p <new-target-copy>
+utgen analyze -p <new-target-copy>
 ```
 
 ### 11.5 集成测试生成数量少
@@ -685,7 +689,7 @@ integration 模式先按 `brinfo` 的 `visible` 标志筛选函数，并且 `utg
 
 会修改目标项目的步骤包括：
 
-- `utgen pre-process`：重命名 `tests`，注释已有测试。
+- `utgen pre-process`：重命名所选 crate 的 `tests`，将测试源码区间替换为空白。
 - `utgen gen`：可能追加 `ntest` 依赖，写入临时测试文件或插入测试做编译检查。
 - `utgen fix`：临时插入测试并恢复，结束时删除备份。
 

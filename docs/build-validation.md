@@ -50,14 +50,14 @@ The installer retains Cargo output, uses the repository directory to select its 
 
 The proxy regression configures only child-process environments, so parallel tests do not change one another's environment. The ordinary LLM constructor retains the SDK's default proxy behavior. The fixtures inject a separate HTTP client with proxies disabled. A test-only `reqwest` dependency reuses the existing locked version; dependency versions, checksums, and lockfile format were not changed.
 
-The [GitHub Actions workflow](../.github/workflows/ci.yml) configures the build, default tests, CLI help checks, installer syntax/help, and standalone bytes metadata checks on Ubuntu 24.04. Its YAML was parsed locally. A hosted workflow run remains to be verified after publication; this document does not claim a Linux CI pass.
+The [GitHub Actions workflow](../.github/workflows/ci.yml) configures the build, default tests, CLI help checks, installer syntax/help, and standalone bytes metadata checks on Ubuntu 24.04. Its YAML was parsed locally. The [Linux branch run](https://github.com/cppbear/PALM/actions/runs/37619301888) and [PR run](https://github.com/cppbear/PALM/actions/runs/37619401144) passed before [PR #5](https://github.com/cppbear/PALM/pull/5) was merged. Subsequent pipeline validation is recorded in [minimal pipeline](minimal-pipeline.md).
 
 ## Validation Limits and Next Batch
 
 - No real model service was contacted. Local fixtures validate request construction and response handling, not model compatibility or generation quality.
 - The tests added here do not exercise preprocessing correctness, focal-context completeness, generated-test insertion, compilation repair, or coverage measurement end to end.
-- Docker was not built: the local Docker daemon was unavailable. Linux runtime validation remains pending.
+- Docker was not built: the local Docker daemon was unavailable. The basic Linux CI passed; the Docker image itself remains unverified.
 - The pinned toolchain and existing dependency versions were retained; `Cargo.lock` adds only the test dependency edge described above. Compatibility of the coverage tool and target-crate dependencies needs separate verification.
-- `utgen analyze` remains a logging-only command. Request concurrency, source restoration, cache validity, and coverage-baseline semantics are unchanged.
+- At this baseline, `utgen analyze` was a logging-only command. The following batch connects analysis and adds a minimal end-to-end check; see [minimal pipeline](minimal-pipeline.md). Concurrency, general recovery, and cache invalidation remain follow-up work.
 
 The next batch should use a small target crate to verify the relationship between prepared source files, analysis locations, function identities, focal context, and generated tests. It should establish failure propagation and coverage semantics before proceeding to a large bytes run.
