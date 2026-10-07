@@ -45,7 +45,7 @@ From the repository root, run:
 ./install.sh
 ```
 
-The script installs `brinfo`, `focxt/call_chain`, `focxt`, and `utgen`. Ensure that the installation directory, typically `$HOME/.cargo/bin`, is in `PATH`.
+The script installs `brinfo`, `focxt/call_chain`, `focxt`, and `utgen`. It locates the repository from its own path, so it can also be invoked from another directory. To select tools, use `./install.sh brinfo utgen`; `./install.sh --help` lists the options. Cargo diagnostics remain visible and installation stops on the first failure. Ensure that the installation directory, typically `$HOME/.cargo/bin`, is in `PATH`.
 
 Alternatively, install each tool from the repository root:
 
