@@ -2,8 +2,13 @@ name: Build and test
 
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -18,15 +23,41 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+      - name: Check patch and determine validation scope
+        id: scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]] || ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            run_code=true
+          else
+            git diff --check "$BASE_SHA" HEAD
+            run_code=false
+            while IFS= read -r -d '' path; do
+              case "$path" in
+                README.md|*/README.md|docs/*.md|docs/assets/*.png|docs/ase2025/*.pdf) ;;
+                *) run_code=true; break ;;
+              esac
+            done < <(git diff --name-only --no-renames -z "$BASE_SHA" HEAD)
+          fi
+          echo "run_code=$run_code" >> "$GITHUB_OUTPUT"
+          if [[ "$run_code" == "false" ]]; then
+            echo "Documentation-only change: patch whitespace checked; Rust checks skipped." >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Install the pinned compiler and components
+        if: steps.scope.outputs.run_code == 'true'
         run: rustup toolchain install nightly-2025-03-19 --profile minimal --component rust-src --component rustc-dev --component llvm-tools-preview
       - name: Build without model configuration
+        if: steps.scope.outputs.run_code == 'true'
         run: |
           test ! -e utgen/res/api.json
           cargo build --workspace --locked
       - name: Run tests without a model service
+        if: steps.scope.outputs.run_code == 'true'
         run: cargo test --workspace --locked
       - name: Check the installer and CLI entry points
+        if: steps.scope.outputs.run_code == 'true'
         run: |
           bash -n install.sh
           ./install.sh --help
@@ -35,16 +66,23 @@ jobs:
           ./target/debug/focxt --help
           ./target/debug/utgen --help
       - name: Check the standalone example workspace
+        if: steps.scope.outputs.run_code == 'true'
         run: cargo metadata --manifest-path examples/bytes/Cargo.toml --no-deps --format-version 1 > /dev/null
       - name: Install the validated coverage tool
+        if: steps.scope.outputs.run_code == 'true'
         run: cargo +stable install cargo-llvm-cov --version 0.6.16 --locked
       - name: Check coverage annotation compatibility
+        if: steps.scope.outputs.run_code == 'true'
         run: python3 scripts/check_coverage.py
       - name: Validate the minimal analysis and test pipeline
+        if: steps.scope.outputs.run_code == 'true'
         run: python3 scripts/check_minimal.py
       - name: Check generation and repair task limits
+        if: steps.scope.outputs.run_code == 'true'
         run: python3 scripts/check_tasks.py
       - name: Build release analysis tools
+        if: steps.scope.outputs.run_code == 'true'
         run: cargo build --workspace --release --locked
       - name: Validate bytes analysis and method identities
+        if: steps.scope.outputs.run_code == 'true'
         run: python3 scripts/check_bytes.py

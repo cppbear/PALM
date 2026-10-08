@@ -40,6 +40,45 @@ def check_artifacts(root, expected):
     return names, contexts
 
 
+def check_constructor_context(root, run):
+    (root / 'src').mkdir(parents=True)
+    (root / 'Cargo.toml').write_text('[package]\nname="constructor_fixture"\nversion="0.1.0"\nedition="2021"\n[workspace]\n')
+    shutil.copyfile(REPO / 'rust-toolchain.toml', root / 'rust-toolchain.toml')
+    (root / 'src/lib.rs').write_text('''pub struct Subject(u32);
+pub struct SubjectOther;
+macro_rules! factory { () => { pub fn recovered(value: u32) -> Subject { Subject(value + 33) } }; }
+impl Subject {
+    pub fn new(value: u32) -> Self { Self(value + 11) }
+    pub fn named(value: u32) -> Subject { Subject(value + 22) }
+    factory!();
+    pub fn ordinary(&self) -> u32 { self.0 + 44 }
+    pub fn unrelated() -> SubjectOther { SubjectOther }
+    pub fn value(&self) -> u32 { self.0 }
+}
+pub fn use_named(value: u32) -> Subject { Subject::named(value) }
+pub struct Holder<T>(T);
+impl<T> Holder<T> {
+    pub fn new(value: T) -> Self { Self(value) }
+    pub fn named(value: T) -> Holder<T> { Holder(value) }
+    pub fn view(&self) -> &T { &self.0 }
+}
+''')
+    before = snapshot(root)
+    run(root, 'analyze', ['utgen', 'analyze', '-p', str(root)])
+    assert snapshot(root) == before
+    _, infos = check_artifacts(root, 10)
+    contexts = {info['fn_name']: (root / f"focxt/{info['encoded_name']}.rs").read_text()
+                for info in infos.values() if info['fn_name'] in ['value', 'use_named', 'view']}
+    # Check the emitted impl, not the retained macro definition preceding it.
+    subject = contexts['value'].split('impl Subject {', 1)[1]
+    for name, result in [('new', 'Self'), ('named', 'Subject'), ('recovered', 'Subject')]:
+        assert re.search(r'fn ' + name + r'\(value: u32\) -> ' + result + r'\s*\{\s*' + result + r'\(value \+ \d+\)', subject), subject
+    assert re.search(r'fn ordinary\(&self\) -> u32 \{\}', subject), subject
+    assert re.search(r'fn unrelated\(\) -> SubjectOther \{\}', subject), subject
+    assert re.search(r'fn named\(value: T\) -> Holder<T>\s*\{\s*Holder\(value\)', contexts['view'])
+    assert re.search(r'fn named\(value: u32\) -> Subject\s*\{\s*Subject\(value \+ 22\)', contexts['use_named'])
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--bin-dir', type=Path, default=REPO / 'target/release')
@@ -108,6 +147,8 @@ impl Probe<u8> for &Subject { forward!(); }
             assert re.search(r'fn tag\([^}]+303', context)
             seen.add('default method')
     assert len(seen) == 4, seen
+
+    check_constructor_context(work / 'constructors', run)
 
     original = snapshot(REPO / 'examples/bytes')
     for number in range(1, args.runs + 1):

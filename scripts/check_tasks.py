@@ -316,11 +316,16 @@ def main():
                 else:
                     assert not (root / 'utgen/result').exists()
         seed = work / 'broken-candidates'
-        for n in [1, 2, 4]:
+        two_task_names = sorted(nmap)[:5]  # More than 2N for N=2.
+        two_task_file = work / 'two-task-functions.txt'
+        two_task_file.write_text('\n'.join(two_task_names) + '\n')
+        task_cases = [(1, None), (2, two_task_names), (4, None)]
+        for n, names in task_cases:
             reset()
-            measured = run(f'gen-{n}', command('gen', n), limit=n, missing_usage=n == 1, backpressure=n == 1)
-            assert measured['total'] == count and measured['peak'] == n, measured
-            results('result', 0)
+            extra = ['--functions-file', str(two_task_file)] if names else []
+            measured = run(f'gen-{n}', command('gen', n, *extra), limit=n, missing_usage=n == 1, backpressure=n == 1)
+            assert measured['total'] == (len(names) if names else count) and measured['peak'] == n, measured
+            results('result', 0, names)
             assert not (root / 'src/lib.rs.bak').exists()
             if n == 1:
                 shutil.copytree(root / 'utgen/generation/pre_fix', seed)
@@ -328,11 +333,12 @@ def main():
                 assert measured['total'] == 0
                 report = json.loads((root / 'utgen/generation/gen-requests.json').read_text())
                 assert report['attempts'] == 0 and report['usage_complete'], report
-        for n in [1, 2, 4]:
+        for n, names in task_cases:
             reset(seed)
-            measured = run(f'fix-{n}', command('fix', n), limit=n, missing_usage=n == 1)
-            assert measured['total'] == count and measured['peak'] == n, measured
-            results('fixed_result', 1)
+            extra = ['--functions-file', str(two_task_file)] if names else []
+            measured = run(f'fix-{n}', command('fix', n, *extra), limit=n, missing_usage=n == 1)
+            assert measured['total'] == (len(names) if names else count) and measured['peak'] == n, measured
+            results('fixed_result', 1, names)
             assert not (root / 'src/lib.rs.bak').exists()
 
         # Existing results for other functions must not enter this invocation.
@@ -340,14 +346,15 @@ def main():
         selected = sorted(nmap)[:2]
         functions_file = work / 'functions.txt'
         functions_file.write_text('\n' + '\n'.join(selected + [selected[0]]) + '\n')
-        selection_args = ['--functions-file', str(functions_file), '--max-requests', '2']
+        function_args = ['--functions-file', str(functions_file)]
+        selection_args = [*function_args, '--max-requests', '2']
         reset(seed)
         pre_dir = root / 'utgen/generation/pre_fix'
         for name in selected:
             (pre_dir / (nmap[name] + '.json')).unlink()
         untouched = {p: p.read_bytes() for p in pre_dir.glob('*.json')}
         measured = run('gen-selected', command('gen', 2, *selection_args), limit=2)
-        assert measured['total'] == 2
+        assert measured['total'] == 2 and measured['peak'] == 2, measured
         results('result', 0, selected)
         for path, content in untouched.items():
             assert path.read_bytes() == content, path
@@ -372,7 +379,7 @@ def main():
         old_other = other.read_bytes()
         before_fix = {p: p.read_bytes() for p in pre_dir.glob('*.json')}
         measured = run('fix-selected', command('fix', 2, *selection_args), limit=2)
-        assert measured['total'] == 2
+        assert measured['total'] == 2 and measured['peak'] == 2, measured
         results('fixed_result', 1, selected)
         assert len(list(fixed_dir.glob('*.json'))) == 3
         assert other.read_bytes() == old_other
@@ -417,10 +424,10 @@ def main():
                     path = root / 'tests' / name
                     path.write_text('// existing compiler input\n')
                     preserved[path] = path.read_bytes()
-            measured = run(f'integration-{oracle}', command('gen', 2, '--integration', *(['--oracle'] if oracle else [])),
+            measured = run(f'integration-{oracle}', command('gen', 2, '--integration', *function_args, *(['--oracle'] if oracle else [])),
                            limit=2, integration=True)
-            assert measured['total'] == count * (3 if oracle else 1), measured
-            results('result', 1)
+            assert measured['total'] == len(selected) * (3 if oracle else 1), measured
+            results('result', 1, selected)
             for file in (root / 'utgen/generation/pre_fix').glob('*.json'):
                 text = file.read_text()
                 assert 'absent_crate' not in text and 'std::cmp::max' in text, file
@@ -432,22 +439,22 @@ def main():
                     assert not path.exists(), path
         for mode in ['gen', 'fix']:
             reset(seed if mode == 'fix' else None)
-            measured = run(f'{mode}-request-error', command(mode, 1), fault='request', fail=True)
-            assert measured['total'] == count, measured  # Remaining workers still finish.
+            measured = run(f'{mode}-request-error', command(mode, 1, *function_args), fault='request', fail=True)
+            assert measured['total'] == len(selected), measured  # The other selected function still finishes.
             assert not (root / 'utgen' / ('result' if mode == 'gen' else 'fixed_result')).exists()
             if mode == 'fix':
                 backup = root / 'src/lib.rs.bak'
                 assert backup.read_text() == original
                 # A later invocation must not overwrite retained recovery material.
                 backup.write_bytes(b'old recovery material\n')
-                measured = run('fix-existing-backup', command('fix', 1), fail=True)
+                measured = run('fix-existing-backup', command('fix', 1, *function_args), fail=True)
                 assert measured['total'] == 0
                 assert backup.read_bytes() == b'old recovery material\n'
                 backup.unlink()
         reset()
-        measured = run('oracle-request-error', command('gen', 1, '--integration', '--oracle'),
+        measured = run('oracle-request-error', command('gen', 1, '--integration', '--oracle', *function_args),
                        integration=True, fault='oracle', fail=True)
-        assert measured['total'] == count * 3 and measured['fault_sent']
+        assert measured['total'] == len(selected) * 3 and measured['fault_sent']
         assert not (root / 'utgen/result').exists()
         reset()
         encoded = next(iter(json.loads((root / 'brinfo/name_map.json').read_text()).values()))

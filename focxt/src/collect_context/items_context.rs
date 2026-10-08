@@ -961,20 +961,15 @@ impl ImplFnItem {
         }
     }
 
-    pub fn insert_item(&mut self, item: &ImplItemFn) {
+    pub fn insert_item(&mut self, item: &ImplItemFn, self_type: &syn::Type) {
         self.item = Some(item.clone());
-        if let ReturnType::Type(_, r_type) = &item.sig.output {
-            match r_type {
-                _ => {
-                    let r_type_string = r_type.to_token_stream().to_string();
-                    if r_type_string.contains("Self")
-                        || r_type_string.contains(self.get_name().as_str())
-                    {
-                        self.is_constructor = true;
-                    }
-                }
+        self.is_constructor = match &item.sig.output {
+            ReturnType::Type(_, return_type) => {
+                return_type.to_token_stream().to_string().contains("Self")
+                    || return_type.as_ref() == self_type
             }
-        }
+            ReturnType::Default => false,
+        };
     }
 
     pub fn insert_fn_name(&mut self, fn_name: &String) {
