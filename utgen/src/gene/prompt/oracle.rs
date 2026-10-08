@@ -4,6 +4,7 @@ use serde::Deserialize;
 #[derive(Debug, Clone, Deserialize)]
 pub struct OracleTemplate {
     system: String,
+    unit: String,
     integration: String,
     context: String,
     focal: String,
@@ -20,6 +21,10 @@ impl PromptTemplate for OracleTemplate {
 
     fn integration(&self) -> Option<&str> {
         Some(&self.integration)
+    }
+
+    fn unit(&self) -> Option<&str> {
+        Some(&self.unit)
     }
 
     fn context(&self) -> &str {
