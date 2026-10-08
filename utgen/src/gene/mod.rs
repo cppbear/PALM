@@ -6,7 +6,7 @@ mod test_ext;
 
 use crate::run::add_ntest_dependency;
 use crate::types::{BrData, RfocxtNameInformation, TestGenInfo};
-use crate::validate_analysis;
+use crate::{FunctionSelection, validate_analysis};
 use cot::{gen_input_range, gen_oracle, gen_prefix, gen_test};
 use generation::{check_integration, check_unit, generation_tests};
 use log::{error, info, warn};
@@ -60,6 +60,7 @@ pub async fn gen_tests_project(
     llm: &LLM,
     project_dir: &Path,
     work_dir: &Path,
+    functions: &FunctionSelection,
     tasks: usize,
     integration: bool,
     requirement: bool,
@@ -91,6 +92,9 @@ pub async fn gen_tests_project(
             if brdata_path.is_file() {
                 let brdata: BrData =
                     serde_json::from_str(&fs::read_to_string(&brdata_path).unwrap()).unwrap();
+                if !functions.contains(&brdata.name) {
+                    continue;
+                }
                 // if brdata.size.min_set < 2 {
                 //     info!("{} has less than 2 condition chains in min_set", brdata.name);
                 //     continue;

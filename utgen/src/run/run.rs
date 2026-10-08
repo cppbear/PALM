@@ -4,6 +4,7 @@ use super::{
     prepare::get_test_gen_infos,
 };
 use crate::{
+    FunctionSelection,
     run::TIMEOUT_DERIVE,
     types::TestGenInfo,
     utils::{backup_file, delete_backup, insert_test, restore_file, target_clean},
@@ -288,13 +289,16 @@ pub fn gen_test_rate_aggregated(project_dir: &Path, is_pre: bool) {
     // keep `touched_files` somewhere, serialize if needed
 }
 
-pub fn gen_test_rate(project_dir: &Path, work_dir: &Path, integration: bool, is_pre: bool) {
-    // add_ntest_dependency(work_dir);
-    let map_path = work_dir.join("brinfo/name_map.json");
-    let nmap: HashMap<String, String> =
-        serde_json::from_str(&fs::read_to_string(&map_path).unwrap()).unwrap();
+pub fn gen_test_rate(
+    project_dir: &Path,
+    work_dir: &Path,
+    integration: bool,
+    is_pre: bool,
+    functions: &FunctionSelection,
+) {
+    let mut test_gen_infos = get_test_gen_infos(project_dir, is_pre);
+    test_gen_infos.retain(|info| functions.contains(info.get_name()));
     if !integration {
-        let mut test_gen_infos = get_test_gen_infos(project_dir, is_pre);
         let mut test_rate_infos: Vec<TestRateInfo> = Vec::new();
         gen_coverage_and_pass_rate(project_dir, work_dir, &test_gen_infos, &mut test_rate_infos);
         dump_result_for_test_rate_infos(
@@ -309,7 +313,6 @@ pub fn gen_test_rate(project_dir: &Path, work_dir: &Path, integration: bool, is_
             gen_coverage_rate_for_original_tests(project_dir, work_dir, &test_gen_infos);
         }
     } else {
-        let mut test_gen_infos = get_test_gen_infos(project_dir, is_pre);
         let integration_infos = gen_integration(&test_gen_infos, project_dir, work_dir);
         let mut test_rate_infos: Vec<TestRateInfo> = Vec::new();
         let test_type = TestType::CoverageRate;

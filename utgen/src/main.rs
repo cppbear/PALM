@@ -7,7 +7,9 @@ use std::{
     num::{NonZeroU64, NonZeroUsize},
     time::Duration,
 };
-use utgen::{LLM, LlmConfig, analyze_project, collect_coverage, validate_repair};
+use utgen::{
+    FunctionSelection, LLM, LlmConfig, analyze_project, collect_coverage, validate_repair,
+};
 use utgen::{comment_out_tests, gen_test_rate, gen_tests_project, llm_fix, rename_tests_to_bak};
 
 /// Generate unit tests for a project
@@ -48,6 +50,12 @@ enum Command {
         /// Timeout in seconds for each model request attempt (at most three attempts)
         #[arg(long, default_value = "180", value_name = "SECONDS")]
         request_timeout: NonZeroU64,
+        /// Exact full function names, one per line (blank lines ignored)
+        #[arg(long, value_name = "PATH")]
+        functions_file: Option<PathBuf>,
+        /// Maximum model request attempts for the whole invocation, including retries
+        #[arg(long, value_name = "N")]
+        max_requests: Option<NonZeroU64>,
         /// Whether to generate integration tests
         #[arg(short, long)]
         integration: bool,
@@ -71,6 +79,12 @@ enum Command {
         /// Timeout in seconds for each model request attempt (at most three attempts)
         #[arg(long, default_value = "180", value_name = "SECONDS")]
         request_timeout: NonZeroU64,
+        /// Exact full function names, one per line (blank lines ignored)
+        #[arg(long, value_name = "PATH")]
+        functions_file: Option<PathBuf>,
+        /// Maximum model request attempts for the whole invocation, including retries
+        #[arg(long, value_name = "N")]
+        max_requests: Option<NonZeroU64>,
     },
 }
 
@@ -172,14 +186,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             options,
             tasks,
             request_timeout,
+            functions_file,
+            max_requests,
             integration,
             requirement,
             context,
             oracle,
         } => {
-            let llm = LLM::new(LlmConfig::load(cli.config.as_deref())?)
-                .with_request_timeout(Duration::from_secs(request_timeout.get()));
             let (project_dir, work_dirs) = get_dirs(options)?;
+            let functions = FunctionSelection::load(functions_file.as_deref(), &work_dirs)?;
+            let llm = LLM::new(LlmConfig::load(cli.config.as_deref())?)
+                .with_request_timeout(Duration::from_secs(request_timeout.get()))
+                .with_max_requests(max_requests);
             info!(
                 "Generating tests for project at {}, with work directory(s) {:?}",
                 project_dir.display(),
@@ -192,6 +210,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         &llm,
                         &project_dir,
                         &work_dir,
+                        &functions,
                         tasks.get(),
                         integration,
                         requirement,
@@ -204,7 +223,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             .await;
             let recorded = if generated.is_ok() || llm.request_count() > 0 {
-                llm.write_request_summary(&project_dir.join("utgen/generation/gen-requests.json"))
+                llm.write_request_summary(
+                    &project_dir.join("utgen/generation/gen-requests.json"),
+                    serde_json::json!({
+                        "command": "gen", "functions": functions.names(),
+                        "project_dir": project_dir, "work_dirs": work_dirs,
+                        "tasks": tasks, "integration": integration, "requirement": requirement,
+                        "context": context, "oracle": oracle,
+                        "candidate_status": if generated.is_ok() { "completed" } else { "failed" },
+                        "error": generated.as_ref().err().map(ToString::to_string),
+                    }),
+                )
             } else {
                 Ok(())
             };
@@ -212,7 +241,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             recorded?;
             // Collect coverage rate and pass rate for each work directory
             for work_dir in work_dirs.iter() {
-                gen_test_rate(&project_dir, &work_dir, integration, true);
+                gen_test_rate(&project_dir, &work_dir, integration, true, &functions);
             }
         }
         // fix unit tests
@@ -220,10 +249,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             options,
             tasks,
             request_timeout,
+            functions_file,
+            max_requests,
         } => {
-            let llm = LLM::new(LlmConfig::load(cli.config.as_deref())?)
-                .with_request_timeout(Duration::from_secs(request_timeout.get()));
             let (project_dir, work_dirs) = get_dirs(options)?;
+            let functions = FunctionSelection::load(functions_file.as_deref(), &work_dirs)?;
+            let llm = LLM::new(LlmConfig::load(cli.config.as_deref())?)
+                .with_request_timeout(Duration::from_secs(request_timeout.get()))
+                .with_max_requests(max_requests);
             info!(
                 "Fixing tests for project at {}, with work directory(s) {:?}",
                 project_dir.display(),
@@ -232,13 +265,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let repaired = async {
                 for work_dir in work_dirs.iter() {
                     validate_repair(&project_dir, work_dir)?;
-                    llm_fix(&llm, project_dir.clone(), work_dir.clone(), tasks.get()).await?;
+                    llm_fix(
+                        &llm,
+                        project_dir.clone(),
+                        work_dir.clone(),
+                        &functions,
+                        tasks.get(),
+                    )
+                    .await?;
                 }
                 Ok::<_, std::io::Error>(())
             }
             .await;
             let recorded = if repaired.is_ok() || llm.request_count() > 0 {
-                llm.write_request_summary(&project_dir.join("utgen/generation/fix-requests.json"))
+                llm.write_request_summary(
+                    &project_dir.join("utgen/generation/fix-requests.json"),
+                    serde_json::json!({
+                        "command": "fix", "functions": functions.names(),
+                        "project_dir": project_dir, "work_dirs": work_dirs, "tasks": tasks,
+                        "candidate_status": if repaired.is_ok() { "completed" } else { "failed" },
+                        "error": repaired.as_ref().err().map(ToString::to_string),
+                    }),
+                )
             } else {
                 Ok(())
             };
@@ -246,7 +294,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             recorded?;
             //gen_test_rate_aggregated(&project_dir, false);
             for work_dir in work_dirs.iter() {
-                gen_test_rate(&project_dir, &work_dir, false, false);
+                gen_test_rate(&project_dir, &work_dir, false, false, &functions);
             }
         }
     }

@@ -274,6 +274,8 @@ utgen fix --project-dir <PROJECT_DIR> [--work-dir <WORK_DIR>...] [--tasks <N>]
 | `-p, --project-dir` | 项目根目录。路径会相对于当前目录解析并 canonicalize。 |
 | `-w, --work-dir` | 工作目录，可重复传入或用逗号分隔，相对路径基于当前命令执行目录，默认等于 project dir。 |
 | `-t, --tasks` | 默认 `4`，必须大于 `0`。生成和修复均限制同时活跃的被测函数任务数；同一函数内的条件链、生成阶段或修复轮次依次执行。 |
+| `--functions-file` | 可选 UTF-8 函数清单，每行一个 `brinfo/name_map.json` 中的完整名称。生成、修复及其统计均按清单筛选；空行忽略、重复项去重，不支持通配符。 |
+| `--max-requests` | 可选的整次命令请求尝试次数上限，必须大于 `0`；默认不设总上限。所有并发任务和重试共享该额度。 |
 | `-i, --integration` | 生成集成测试，放到 `tests/` 目录，按分析结果的 `visible` 标志筛选函数并进行编译检查。 |
 | `-r, --requirement` | 在提示词中加入条件链约束。 |
 | `-c, --context` | 在提示词中加入 `focxt/<encoded>.rs` 上下文。 |
@@ -285,9 +287,11 @@ utgen fix --project-dir <PROJECT_DIR> [--work-dir <WORK_DIR>...] [--tasks <N>]
 
 任务异常会在等待所有任务结束后报告，并跳过后续覆盖率统计。修复成功时只删除本次创建的备份；任务失败时恢复源码并保留这些备份，已有备份不会被覆盖。候选本身编译不通过仍按测试结果处理。模型请求现在统一执行：`--request-timeout` 默认每次尝试 180 秒，包含响应体读取；网络错误、429（余额不足除外）和 5xx 最多尝试 3 次，其他 HTTP 错误或空回答直接报错。格式纠正和编译修复轮次单独计算，不再叠加网络重试。缺少 `usage` 的有效回答可以继续，但请求统计标记为不完整；生成和修复分别写入 `utgen/generation/gen-requests.json`、`fix-requests.json`。该期限不涵盖 Cargo 子进程，也不提供跨进程锁或强制终止恢复。
 
+小规模试跑可在 `gen`、`fix` 中分别传入同一份 `--functions-file`，不会自动沿用上次清单。空清单和未知名称在修改目标前报错；修复时缺少所选函数的候选结果也会报错。`--max-requests` 包含所有并发任务、生成阶段、格式纠正、修复轮次及网络重试的请求尝试，计数与额度检查使用同一个共享计数器。额度用完且仍需请求时，命令失败，等待已有请求收尾并恢复源码；恰好用完额度且工作全部完成则成功。请求报告记录模型、选项、去重后的函数清单、候选处理状态和用量；候选状态不等于测试通过或覆盖率统计完成。未选函数的已有文件保留，跨实验应使用新副本。准备好的 [2 函数和 8 函数清单及操作说明](../examples/README.md#prepare-a-small-model-trial)用于后续真实模型验收，目前不代表已取得真实模型结果。
+
 ### 8.2 LLM 配置
 
-`utgen/src/gene/llm.rs` 使用 `async-openai` 调用兼容 OpenAI Chat Completions 的接口。模型配置由 `utgen/src/config.rs` 在运行时加载；可以复制 `utgen/res/api.example.json` 并填写为：
+`utgen/src/gene/llm.rs` 保留 `async-openai` 的请求／响应类型，通过 `reqwest` 调用兼容 OpenAI Chat Completions 的接口，统一管理重试。模型配置由 `utgen/src/config.rs` 在运行时加载；可以复制 `utgen/res/api.example.json` 并填写为：
 
 ```text
 utgen/res/api.json

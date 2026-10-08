@@ -68,3 +68,9 @@ The same check covers direct and input/prefix/oracle integration generation, rem
 ## Model Request Regression
 
 Local HTTP tests exercise the shared generation/repair request path, including response usage omissions, empty choices or content, invalid JSON, permanent 4xx errors, transient 429/5xx errors, dropped connections, and delayed response bodies. They verify actual attempt counts and bounded retry exhaustion without calling a real service. Existing task checks also verify request summaries and source/backup handling after a final request failure. `--request-timeout` defaults to 180 seconds per attempt and rejects zero before configuration loading. Request formatting and compilation repair retries remain business-level operations, not additional transport retry layers.
+
+## Function Selection and Request Budgets
+
+`scripts/check_tasks.py` generates and repairs just two selected functions while other saved candidates remain in the same directories. It checks actual request counts, selected-only statistics, untouched unselected candidate files, and invocation records. Duplicate names and blank lines are accepted. Separate CLI tests reject empty/unknown lists and a zero request limit before configuration or target changes.
+
+With four function workers and a two-attempt limit, both generation and repair must send exactly two requests, return failure when more work needs a request, restore sources, and skip statistics. Local HTTP unit tests additionally cover retries consuming the limit, concurrent clones sharing it, and success on the final allowed attempt. None of these checks uses real model credentials. The bytes analysis check validates the checked-in two- and eight-function lists against the complete analysis index for a later model trial.

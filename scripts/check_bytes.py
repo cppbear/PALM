@@ -119,6 +119,14 @@ impl Probe<u8> for &Subject { forward!(); }
         elapsed, output = run(root, 'analyze', ['utgen', 'analyze', '-p', str(root)])
         assert snapshot(root) == prepared, 'analysis modified prepared sources'
         names, infos = check_artifacts(root, 663)
+        # Keep the future model-smoke lists aligned with real compiler identities.
+        for count, chains in [(2, 2), (8, 16)]:
+            selected = (REPO / f'examples/bytes-smoke-{count}.txt').read_text().splitlines()
+            assert len(selected) == len(set(selected)) == count
+            assert set(selected) <= names.keys()
+            actual_chains = sum(json.loads((root / f'brinfo/brdata/{names[name]}.json').read_text())
+                                ['size']['min_set'] for name in selected)
+            assert actual_chains == chains, (count, actual_chains)
         # Verify representative default, generic-impl, and macro-generated methods.
         for name, info in infos.items():
             context = (root / f"focxt/{info['encoded_name']}.rs").read_text()

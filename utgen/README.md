@@ -146,12 +146,24 @@ utgen gen -p <target-crate-path> --requirement --context
 | `-i, --integration` | Generate integration tests under `tests/`, using the analysis visibility flag to select functions and compilation checks to filter candidates. Default: off. |
 | `-t, --tasks` | Default: 4. Maximum active focal-function generation jobs; must be positive. |
 | `--request-timeout` | Default: 180 seconds per model request attempt; also available for `fix`. Must be positive. |
+| `--functions-file` | Optional path to exact full analysis-index names, one per line; also available for `fix`. |
+| `--max-requests` | Optional positive request-attempt limit for the whole command, including retries; also available for `fix`. Default: no overall limit. |
 
 Generation validates the branch index, context index, context files, and source paths before modifying the target. Missing or inconsistent artifacts are errors. A failed generation task is reported instead of being silently lost before statistics. `--tasks 0` is rejected.
 
 Each generation job handles one focal function, including its condition chains and input/prefix/oracle stages sequentially. It holds a slot until its result enters the bounded queue, which also has capacity N. A single consumer validates candidates and their imports while other jobs can await model responses. Thus N limits active generation jobs, not the number of compiler processes or Cargo's internal build jobs; buffered results and the candidate currently being validated are separate.
 
 Generation may append an `ntest` dependency to the target's Cargo.toml. Existing `utgen/generation/pre_fix/<encoded>.json` results are skipped, so use a fresh target copy for a different model, prompt, or generation mode.
+
+### Limited function runs
+
+Copy names exactly from the keys of `brinfo/name_map.json` into a UTF-8 text file, one per line. `--functions-file` resolves against the current shell directory. Surrounding whitespace and blank lines are ignored, duplicate names are processed once, and there is no wildcard or comment syntax. Missing files, empty lists, and unknown names fail before configuration loading or target changes. Omitting the option preserves the normal all-function behavior; integration generation still applies its visibility filter.
+
+The same selection applies to generation, repair preparation, and per-function coverage/execution statistics. Pass it to both `gen` and `fix`; it is not inherited from an earlier command. Repair reports a selected function with no saved candidate as an error. Unselected candidate and result files remain unchanged. Output directories can therefore contain older results outside the current selection: the invocation record identifies this run's selection. Use separate fresh copies when comparing experiments, including different integration-test selections.
+
+`--max-requests N` counts every model request attempt across all workers, chains, generation stages, format retries, and repair rounds. Network retries consume the same limit. Checking and incrementing the count is one shared operation, so concurrent workers cannot overshoot it. Once another attempt is needed after the limit, the command fails, joins all workers, restores sources, and skips subsequent statistics; already sent requests may finish and successful candidates may be saved. Reaching exactly N attempts while completing all work is successful. A later command has its own budget. This is an attempt cap, not a token, monetary, or wall-clock budget.
+
+The request report also records `model`, `request_timeout_seconds`, `max_requests`, `budget_exhausted`, and an `invocation` object with command, directories, options, deduplicated function names (`null` means no explicit selection), `candidate_status`, and an error when present. `candidate_status` describes generation/repair worker completion before statistics, not passing tests or completed coverage. The report does not serialize the API key or endpoint. Each command replaces its own previous report, including zero-request cached runs; preflight failures before work do not create a new report. Existing candidate and statistics JSON provide the per-function outcomes.
 
 ### Repair
 
@@ -176,7 +188,7 @@ Paths under `utgen/` below are relative to `--project-dir`:
 | `utgen/generation/prompt/` and `answer/` | Prompts and model responses. |
 | `utgen/generation/pre_fix/` | Candidate tests and their compilation status before repair. |
 | `utgen/generation/llm_fix/` | Candidates and their compilation status after repair. |
-| `utgen/generation/gen-requests.json` and `fix-requests.json` | Request attempts, failures, reported token totals, and usage completeness for the invocation. |
+| `utgen/generation/gen-requests.json` and `fix-requests.json` | Model/options/function selection, request limits and counts, reported token totals, usage completeness, and candidate-stage status. |
 | `utgen/result/` | Pre-repair coverage and execution statistics per focal function. |
 | `utgen/fixed_result/` | Post-repair coverage and execution statistics per focal function. |
 | `utgen/original_result.json` | Comparison statistics when the original integration-test backup is available. |
