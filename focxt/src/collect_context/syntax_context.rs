@@ -1038,7 +1038,7 @@ impl SyntaxContext {
                     function
                         .insert_complete_name_in_file(&format!("{{impl#{}}}", item.get_impl_num()));
                     function.insert_visibility(parse_visibility(&parsed.vis));
-                    function.insert_item(&parsed);
+                    function.insert_item(&parsed, &item.get_item().self_ty);
                     function.bind_compiler_info(info);
                     item.insert_function(&function);
                 }
@@ -1279,7 +1279,7 @@ impl SyntaxContext {
                                 let mut modified_item_fn = item_fn.clone();
                                 modified_item_fn.attrs =
                                     delete_doc_attributes(&modified_item_fn.attrs);
-                                impl_fn_item.insert_item(&modified_item_fn);
+                                impl_fn_item.insert_item(&modified_item_fn, &item_impl.self_ty);
                                 let mut inside_items: Vec<Item> = Vec::new();
                                 for stmt in item_fn.block.stmts.iter() {
                                     if let Stmt::Item(stmt_item) = stmt {
