@@ -324,6 +324,58 @@ def main():
             assert report['attempts'] == 0, report
         shutil.move(original_tests, target / 'tests.bak')
         assert snapshot(target) == prepared
+
+        # Original and generated integration tests must coexist, including on
+        # a cached rerun and after original-test compilation fails.
+        answer['chain_tests'] = [dict(
+            attrs=[], prefix=[], oracles=[], codes=[['{', 'assert_eq!(classify(2), 1);', '}']],
+            can_compile=[{'Ok': None}], repaired=[False])]
+        candidate.write_text(json.dumps(data, indent=2) + '\n')
+        integration_command = ['utgen', 'gen', '-p', str(target), '--functions-file', str(selection), '--integration']
+
+        def integration_snapshot():
+            # Cached generation rewrites imports from a HashSet in any order.
+            return {p: re.sub(rb'(?m)(?:^use [^\n]*\n)+',
+                              lambda m: b''.join(sorted(m[0].splitlines(keepends=True))), content)
+                    if p.startswith('tests/') else content
+                    for p, content in snapshot(target).items()}
+
+        for label in ['integration-original-tests', 'integration-original-tests-cached']:
+            run(label, integration_command)
+            result = json.loads((target / f'utgen/result/{names[selected]}.json').read_text())
+            assert result['tests_run'] == result['tests_passed'] == 1, result
+            original_result = json.loads((target / 'utgen/original_result.json').read_text())
+            assert [r['function_name'] for r in original_result] == [selected]
+            assert original_result[0]['lines_covered'], original_result
+            current = snapshot(target)
+            assert {p: content for p, content in current.items() if not p.startswith('tests/')} == prepared
+            assert any(p.startswith('tests/') for p in current)
+            assert not (target / 'tests.bak2').exists()
+        integration_prepared = integration_snapshot()
+        original_file = target / 'tests.bak/original.rs'
+        original_content = original_file.read_bytes()
+        original_file.write_bytes(original_content + b'\ncompile_error!("original-test failure fixture");\n')
+        failed_prepared = integration_snapshot()
+        failure = run('integration-original-tests-compile-error', integration_command, expected=1)
+        assert 'original-test failure fixture' in failure.stderr
+        assert integration_snapshot() == failed_prepared
+        assert not (target / 'tests.bak2').exists()
+        original_file.write_bytes(original_content)
+        assert integration_snapshot() == integration_prepared
+        # An existing, even empty, staging directory must not be overwritten.
+        staging = target / 'tests.bak2'
+        staging.mkdir()
+        failure = run('integration-existing-staging', integration_command, expected=1)
+        assert 'tests.bak2 already exists' in failure.stderr
+        assert staging.is_dir() and not list(staging.iterdir())
+        assert integration_snapshot() == integration_prepared
+        staging.rmdir()
+        assert not list((target / 'src').rglob('*.bak'))
+        assert (state['generation'], state['repair']) == requests_before, state
+        report = json.loads((target / 'utgen/generation/gen-requests.json').read_text())
+        assert report['attempts'] == 0, report
+        shutil.rmtree(target / 'tests')
+        assert snapshot(target) == prepared
         (work / 'summary.json').write_text(json.dumps(state, indent=2) + '\n')
         print('Minimal analysis/generation/repair/coverage checks passed.', flush=True)
     finally:
