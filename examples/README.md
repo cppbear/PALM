@@ -1,8 +1,8 @@
 # Examples
 
-Start with the [minimal pipeline](../docs/minimal-pipeline.md) for an automated, no-credentials validation. The commands below describe the larger bytes target; the complete pipeline is currently regression-tested on the minimal crate.
+Start with the [minimal pipeline](../docs/minimal-pipeline.md) for an automated, no-credentials validation. The commands below use a working copy of the larger bytes target and limit model generation and repair to selected functions.
 
-The [bytes analysis check](../docs/bytes-analysis.md) now validates all 663 exported functions and their context artifacts on two fresh copies. Run `cargo build --workspace --release --locked` and `python3 scripts/check_bytes.py` from the repository root. Model-based generation and repair on bytes remain a separate validation stage.
+The [bytes analysis check](../docs/bytes-analysis.md) validates all 663 exported functions and their context artifacts on two fresh copies. Run `cargo build --workspace --release --locked` and `python3 scripts/check_bytes.py` from the repository root. This check does not call a model service or measure generated-test quality.
 
 ## bytes
 
@@ -37,33 +37,38 @@ Analysis runs brinfo and focxt (including call-chain) on the prepared source, re
 
 ### Generate and Repair Unit Tests
 
-```sh
-utgen gen -p "$palm_example_dir" --requirement --context
-utgen fix -p "$palm_example_dir"
-```
-
 `--requirement` enables generation for representative condition chains; `--context` includes focal context in the prompt. Both flags are off by default. In unit mode, candidates are stored in JSON and temporarily inserted into the target source for checks and execution.
+
+Use the scoped example below to start. The [command reference](../utgen/README.md#limited-function-runs) describes other selections and all-function behavior.
 
 ### Prepare a Small Model Trial
 
 The checked-in [two-function list](bytes-smoke-2.txt) selects `Bytes::len` and `BytesMut::len`. The [eight-function list](bytes-smoke-8.txt) adds `is_empty`, `split_off`, and `truncate` for both types. They cover 2 and 16 representative condition chains respectively. The repeated namespace segments are exact compiler-index names. The analysis regression checks both lists without calling a model.
 
-For a future trial, agree on the model configuration and separate generation/repair attempt limits first. Set `palm_gen_limit` and `palm_fix_limit` to those positive integers, then use the prepared working copy:
+Choose the model in your runtime configuration and set separate generation and repair attempt limits. The values below are example budgets; adjust them as needed. Omitting `--max-requests` leaves the command without an overall request limit.
 
 ```sh
+palm_gen_limit=8
+palm_fix_limit=8
+
 utgen gen -p "$palm_example_dir" --requirement --context \
   --functions-file "$palm_repo/examples/bytes-smoke-2.txt" \
   --max-requests "$palm_gen_limit"
+```
+
+After generation completes, run compilation repair with the same function list. Repair handles compilation errors; runtime test failures remain in the statistics.
+
+```sh
 utgen fix -p "$palm_example_dir" \
   --functions-file "$palm_repo/examples/bytes-smoke-2.txt" \
   --max-requests "$palm_fix_limit"
 ```
 
-Both commands default to four active function tasks and a 180-second deadline per request attempt. Every retry consumes the command's attempt limit. Review the request reports, candidate compilation/pass counts, coverage, and restored sources before expanding to eight functions on another fresh copy. Keep configuration and generation mode fixed when comparing these runs. No real-model result is claimed by the deterministic checks; the lists and limits prepare that later validation.
+Both commands default to four active function tasks and a 180-second deadline per request attempt. Every retry consumes the command's attempt limit. Review the [results](#results) and restored sources before expanding to eight functions on another fresh copy. Replace the function-list path in both commands for that selection. Keep configuration and generation mode fixed when comparing runs; the deterministic checks do not measure model quality.
 
 ### Integration Test Mode
 
-Use a fresh working copy and repeat extraction and preprocessing before choosing this mode, since existing generation results are reused independently of these flags:
+Use a fresh working copy and repeat preprocessing and analysis before choosing this mode, since existing generation results are reused independently of these flags:
 
 ```sh
 utgen gen -p <target-crate-path> --integration --requirement --context
@@ -72,6 +77,12 @@ utgen gen -p <target-crate-path> --integration --requirement --context
 Integration mode generates files under the target's `tests/` directory after filtering functions using the analysis visibility flag and checking compilation. `utgen fix` currently uses source-inserted unit tests for repair and post-repair statistics; it does not provide a separate integration-mode repair pipeline.
 
 ### Results
+
+Read the outputs in this order:
+
+1. Check the request reports under `utgen/generation/` for candidate-stage completion, request counts, and budget exhaustion. A completed candidate stage does not mean every test passed or coverage statistics finished.
+2. Inspect `utgen/result/` or `utgen/fixed_result/` for the selected functions' compilation, execution, and passing-test counts.
+3. Read coverage from those per-function statistics alongside the test outcomes.
 
 Paths below are relative to the working copy:
 
