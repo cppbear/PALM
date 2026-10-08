@@ -316,12 +316,16 @@ def main():
                 else:
                     assert not (root / 'utgen/result').exists()
         seed = work / 'broken-candidates'
-        # N=2 is exercised by the selected-function cases below.
-        for n in [1, 4]:
+        two_task_names = sorted(nmap)[:5]  # More than 2N for N=2.
+        two_task_file = work / 'two-task-functions.txt'
+        two_task_file.write_text('\n'.join(two_task_names) + '\n')
+        task_cases = [(1, None), (2, two_task_names), (4, None)]
+        for n, names in task_cases:
             reset()
-            measured = run(f'gen-{n}', command('gen', n), limit=n, missing_usage=n == 1, backpressure=n == 1)
-            assert measured['total'] == count and measured['peak'] == n, measured
-            results('result', 0)
+            extra = ['--functions-file', str(two_task_file)] if names else []
+            measured = run(f'gen-{n}', command('gen', n, *extra), limit=n, missing_usage=n == 1, backpressure=n == 1)
+            assert measured['total'] == (len(names) if names else count) and measured['peak'] == n, measured
+            results('result', 0, names)
             assert not (root / 'src/lib.rs.bak').exists()
             if n == 1:
                 shutil.copytree(root / 'utgen/generation/pre_fix', seed)
@@ -329,11 +333,12 @@ def main():
                 assert measured['total'] == 0
                 report = json.loads((root / 'utgen/generation/gen-requests.json').read_text())
                 assert report['attempts'] == 0 and report['usage_complete'], report
-        for n in [1, 4]:
+        for n, names in task_cases:
             reset(seed)
-            measured = run(f'fix-{n}', command('fix', n), limit=n, missing_usage=n == 1)
-            assert measured['total'] == count and measured['peak'] == n, measured
-            results('fixed_result', 1)
+            extra = ['--functions-file', str(two_task_file)] if names else []
+            measured = run(f'fix-{n}', command('fix', n, *extra), limit=n, missing_usage=n == 1)
+            assert measured['total'] == (len(names) if names else count) and measured['peak'] == n, measured
+            results('fixed_result', 1, names)
             assert not (root / 'src/lib.rs.bak').exists()
 
         # Existing results for other functions must not enter this invocation.
