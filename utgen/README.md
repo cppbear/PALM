@@ -2,6 +2,8 @@
 
 utgen generates Rust tests from condition chains and focal context, checks compilation, repairs compilation errors, and collects coverage and execution statistics.
 
+For a first run, start with [PALM's offline quick start](../README.md#quick-start), then follow the [two-function model trial](../examples/README.md#prepare-a-small-model-trial). This page is the detailed command reference.
+
 ## Prerequisites
 
 Model configuration is loaded at runtime, once per `gen` or `fix` command. Building, installing, running help, `pre-process`, `analyze`, and `coverage` do not require it.
@@ -59,6 +61,8 @@ From the repository root:
 cargo build -p utgen --locked
 cargo install --path utgen --locked
 ```
+
+The `analyze` command also requires [brinfo](../brinfo/README.md), [focxt](../focxt/README.md), and [call_chain](../focxt/call_chain/README.md) on `PATH`. Use the [root installer](../README.md#installation) to install all tools. Installing utgen alone does not install these companion executables.
 
 ## Testing
 

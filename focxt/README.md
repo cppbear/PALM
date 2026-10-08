@@ -1,26 +1,46 @@
 # focxt
 
-This tool is capable of analyzing the context for a specified Rust crate.
+focxt constructs the source context for each focal function in [PALM](../README.md). It combines compiler-derived calls and types with source-level modules, declarations, and implementations to produce context for test-generation prompts.
 
-## Build
+## Build and install
+
+Follow the [project prerequisites](../README.md#prerequisites), including the pinned `nightly-2025-03-19` toolchain. From the PALM repository root:
 
 ```sh
-cargo build
+cargo build -p call_chain -p focxt --locked
+cargo install --path focxt/call_chain --locked
+cargo install --path focxt --locked
 ```
+
+focxt invokes `cargo call-chain` at runtime, so install [call_chain](call_chain/README.md) as well as focxt and keep Cargo's binary directory in `PATH`. Rebuild and install both together after changes to their shared analysis data. No model configuration is needed.
 
 ## Usage
 
-```bash
-A rust program to get focal context for a crate.
+Use a working copy of a standalone crate with the same pinned toolchain. For the test-generation workflow, [preprocess and analyze with utgen](../utgen/README.md#analysis): it runs both brinfo and focxt and validates their outputs.
 
-Usage: focxt --crate <CRATE_PATH>
+To construct context directly from prepared source:
 
-Options:
-  -c, --crate <CRATE_PATH>  Sets crate path
-  -h, --help                Print help
-  -V, --version             Print version
+```sh
+focxt --crate /absolute/path/to/target-crate
 ```
 
-`focxt -c crate_path` or `focxt --crate crate_path`
+`-c` is the short form of `--crate`. focxt runs `cargo clean` and `cargo call-chain` inside the target before building context; running call-chain separately is unnecessary for this command. Start with a fresh working copy when repeating analysis, since build-cache cleanup does not remove previous context artifacts.
 
-Function contexts use call-chain's compiler identities and source positions, including distinct generic trait impls and reference receivers. Recoverable macro-generated method bodies are associated with their enclosing source impl; this is not general macro expansion. Rebuild focxt and call-chain together. See the [bytes analysis validation](../docs/bytes-analysis.md) for release builds, reproducible checks, and current limits.
+## Output
+
+Paths are relative to the target crate:
+
+| Path | Contents |
+| --- | --- |
+| `focxt/impl_informations.json` | Function identities, source locations, and encoded artifact identifiers from call-chain. |
+| `focxt/<encoded>.rs` | Per-function context used by utgen. |
+| `focxt/callsandtypes/<encoded>.json` | Direct calls and type dependencies from call-chain. |
+| `focxt/new_callsandtypes/<encoded>.json` | Calls and types expanded during context construction. |
+
+Additional text files under `focxt/` describe parsed declarations and module trees for debugging. Generation also requires [brinfo](../brinfo/README.md) output from the same prepared source.
+
+## Scope and checks
+
+Function contexts use call-chain's compiler identities and source positions, including distinct generic trait impls and reference receivers. Recoverable macro-generated method bodies are associated with their enclosing source impl; this is not general macro expansion.
+
+See [minimal pipeline validation](../docs/minimal-pipeline.md) for an offline fixture check and [bytes analysis validation](../docs/bytes-analysis.md) for release builds, reproducible checks, and current limits. The [technical guide](../docs/palm-rust-unit-test-generation.md) explains context selection in more detail.
