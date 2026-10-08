@@ -39,10 +39,10 @@ RUN sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master
     # ...
     && rustup toolchain install nightly-2025-03-19 --profile minimal \
         --component rust-src --component rustc-dev --component llvm-tools-preview --component rust-analyzer \
-    && rustup default nightly-2025-03-19 \
-    && host=$(rustc -vV | grep '^host:' | cut -d' ' -f2) \
-    && \
-    curl --proto '=https' --tlsv1.2 -fsSL \
+    && rustup default nightly-2025-03-19
+
+RUN host=$(rustc -vV | grep '^host:' | cut -d' ' -f2) \
+    && curl --proto '=https' --tlsv1.2 -fsSL \
     "https://github.com/taiki-e/cargo-llvm-cov/releases/download/v0.6.16/cargo-llvm-cov-$host.tar.gz" \
     | tar xzf - -C "$HOME/.cargo/bin"
 
