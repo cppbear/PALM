@@ -4,7 +4,10 @@ PALM's implementation, technical guide, and conference materials are available i
 
 | Resource | Contents |
 | --- | --- |
-| [Project README](../README.md) | Prerequisites, installation, and workspace layout. |
+| [Project README](../README.md) | Quick start, installation, workflow, and workspace layout. |
+| [Contribution guide](../CONTRIBUTING.md) | Local checks, issue reports, and pull requests. |
+| [Citation](../CITATION.cff) | Preferred citation for the ASE 2025 paper. |
+| [License](../LICENSE) | MIT license for PALM. |
 | [Technical guide in Chinese](palm-rust-unit-test-generation.md) | Condition chains, context construction, generation, repair, and usage. |
 | [Minimal pipeline](minimal-pipeline.md) | Deterministic program-analysis, generation, repair, and coverage validation. |
 | [bytes analysis](bytes-analysis.md) | Release-tool analysis baseline, method identity checks, and timings. |
