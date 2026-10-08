@@ -1,8 +1,6 @@
-use super::Prompt;
 use super::LLM;
-use log::{error, info};
-use rand::Rng;
-use tokio::time::{sleep, Duration};
+use super::Prompt;
+use log::error;
 
 fn postprocess(inputs: &mut Vec<String>) {
     for input in inputs.iter_mut() {
@@ -19,39 +17,18 @@ pub async fn gen_oracle(
 ) -> Option<(String, u32, u32)> {
     let system_pt = &pt_info.system_pt;
     let static_pt = &pt_info.static_pt;
-    let mut completion_tokens = 0;
-    let mut prompt_tokens = 0;
 
     let mut user_pt = static_pt.clone() + &conds.join("");
-    user_pt +=
-        "Here is the test function code. You should generate the corresponding test oracles for it:\n";
+    user_pt += "Here is the test function code. You should generate the corresponding test oracles for it:\n";
     user_pt += &code.join("\n");
-    let mut retry = 0;
-    let mut answers = None;
-    while retry < 3 {
-        if retry != 0 {
-            let random_secs = {
-                let mut rng = rand::rng();
-                rng.random_range(10..=30)
-            };
-            sleep(Duration::from_secs(random_secs)).await;
-        }
-        let result = llm.fetch_answer(Some(&system_pt), &user_pt, 1, false).await;
-        if result.is_ok() {
-            let (result_answers, usage_completion, usage_prompt) = result.unwrap();
-            completion_tokens += usage_completion;
-            prompt_tokens += usage_prompt;
-            answers = Some(result_answers);
-            break;
-        }
-        error!("{}. Retrying...", result.unwrap_err());
-        retry += 1;
-    }
-    if answers.is_none() {
-        error!("Failed to fetch answer.");
-        return None;
-    }
-    let mut answers = answers.unwrap();
+    let (mut answers, completion_tokens, prompt_tokens) =
+        match llm.fetch_answer(Some(system_pt), &user_pt, 1, false).await {
+            Ok(answer) => answer,
+            Err(error) => {
+                error!("Model request failed: {error}");
+                return None;
+            }
+        };
 
     postprocess(&mut answers);
     // info!("Answers: {:?}", answers);

@@ -15,6 +15,7 @@ quick-xml = "0.37"
 quote = "1.0"
 rand = "0.9"
 regex = "1.11"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 simplelog = "0.12"
@@ -23,9 +24,6 @@ syn = { version = "2.0", features = ["full", "visit"] }
 time = "0.3"
 tokio = { version = "1", features = ["full"] }
 walkdir = "2.5"
-
-[dev-dependencies]
-reqwest = { version = "0.12", default-features = false }
 
 [build-dependencies]
 build-utils = { path = "../build-utils" }

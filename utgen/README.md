@@ -32,6 +32,12 @@ An absolute path continues to work after changing into the target crate. Relativ
 
 Changing configuration takes effect on the next invocation without rebuilding. There are no built-in model credentials. Configuration values are not printed in configuration diagnostics.
 
+Generation and repair share one non-streaming request path. `--request-timeout <SECONDS>` defaults to 180 and covers each attempt, including its response body. Transport failures, HTTP 429 (except `insufficient_quota`), and 5xx responses get at most three attempts, with 1- and 2-second delays. Other HTTP errors and malformed/empty answers are returned without network retries. SDK retries are not layered underneath this policy; the existing request/response types are retained while the existing reqwest dependency executes HTTP requests.
+
+A valid answer without `usage` remains usable. Numeric token fields contain reported usage only; missing usage contributes no known tokens, which must not be interpreted as zero actual usage. The command writes `utgen/generation/gen-requests.json` or `fix-requests.json` with attempt/failure counts, missing-usage counts, reported token totals, and `usage_complete`. That flag is false after any failed attempt or response without usage. These files also cover requests whose answers failed later parsing. They are written after workers finish, including request failures; successful cached runs record zero attempts. Validation failures before any request leave the target untouched.
+
+Formatting retries and compiler-guided repair rounds remain separate from transport retries. A final request failure, including during oracle generation or repair, fails the command and skips subsequent statistics. The request deadline does not terminate Cargo processes or impose a whole-function deadline.
+
 Install the toolchain and coverage tool described in the [project README](../README.md#prerequisites). On a fresh working copy, run `utgen pre-process -p <target-crate-path>` and then `utgen analyze -p <target-crate-path>` to produce:
 
 ```text
@@ -139,6 +145,7 @@ utgen gen -p <target-crate-path> --requirement --context
 | `-o, --oracle` | Use separate input-range, test-prefix, and oracle generation. Default: off; otherwise generate complete tests directly. |
 | `-i, --integration` | Generate integration tests under `tests/`, using the analysis visibility flag to select functions and compilation checks to filter candidates. Default: off. |
 | `-t, --tasks` | Default: 4. Maximum active focal-function generation jobs; must be positive. |
+| `--request-timeout` | Default: 180 seconds per model request attempt; also available for `fix`. Must be positive. |
 
 Generation validates the branch index, context index, context files, and source paths before modifying the target. Missing or inconsistent artifacts are errors. A failed generation task is reported instead of being silently lost before statistics. `--tasks 0` is rejected.
 
@@ -156,7 +163,7 @@ Repair reads the generated candidates and uses compiler diagnostics to revise th
 
 Source insertion, target cleanup, compilation/test execution, diagnostic reading, and source restoration are serialized within each command. Model requests may overlap. Cargo retains its own dependency-build parallelism. Concurrent PALM commands or experiments require separate working copies and separate target directories.
 
-All workers are joined before cleanup. A task panic or infrastructure error returns a nonzero status and skips subsequent coverage statistics; candidate compilation errors remain ordinary repair outcomes. Repair restores its source backups before returning, deletes only backups created by that invocation on success, and retains them after a worker failure. Existing source backups are rejected without overwriting them. Temporary import/candidate files are restored or removed after validation, including unwinding. This is not recovery from forced process termination, and request/subprocess deadlines remain unchanged.
+All workers are joined before cleanup. A task panic or infrastructure error returns a nonzero status and skips subsequent coverage statistics; candidate compilation errors remain ordinary repair outcomes. Repair restores its source backups before returning, deletes only backups created by that invocation on success, and retains them after a worker failure. Existing source backups are rejected without overwriting them. Temporary import/candidate files are restored or removed after validation, including unwinding. This is not recovery from forced process termination. Model request deadlines are described above; Cargo subprocess deadlines remain separate work.
 
 There is no integration-mode option for repair. Candidates are inserted into source files as unit tests, and post-repair statistics use that same mode. Do not interpret `gen --integration` followed by `fix` as preserving an integration-only evaluation.
 
@@ -169,6 +176,7 @@ Paths under `utgen/` below are relative to `--project-dir`:
 | `utgen/generation/prompt/` and `answer/` | Prompts and model responses. |
 | `utgen/generation/pre_fix/` | Candidate tests and their compilation status before repair. |
 | `utgen/generation/llm_fix/` | Candidates and their compilation status after repair. |
+| `utgen/generation/gen-requests.json` and `fix-requests.json` | Request attempts, failures, reported token totals, and usage completeness for the invocation. |
 | `utgen/result/` | Pre-repair coverage and execution statistics per focal function. |
 | `utgen/fixed_result/` | Post-repair coverage and execution statistics per focal function. |
 | `utgen/original_result.json` | Comparison statistics when the original integration-test backup is available. |

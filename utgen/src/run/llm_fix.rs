@@ -17,7 +17,6 @@ use serde::Deserialize;
 use std::{
     cmp::min,
     collections::{BTreeSet, HashMap},
-    error::Error,
     fs::{self, create_dir_all, exists, read_to_string, File},
     i32,
     io::{self, Write},
@@ -27,7 +26,7 @@ use std::{
         Arc,
     },
 };
-use tokio::time::{sleep, Duration};
+use tokio::time::Duration;
 use tokio::{
     sync::{Mutex, OnceCell, Semaphore},
     time::Instant,
@@ -35,11 +34,6 @@ use tokio::{
 
 static FIX_LOCK: OnceCell<Mutex<()>> = OnceCell::const_new();
 static FIX_TIMEOUT: u64 = 28800;
-
-async fn get_fixes_from_llm(llm: &LLM, prompt: &String, n: i32) -> Result<(Vec<String>, u32, u32), Box<dyn Error + Send>> {
-    let answers = llm.get_answer(&prompt, n as u8, false).await;
-    answers
-}
 
 fn compiler_error_parser_from_json(work_path: &Path) -> Vec<CompilerMessage> {
     let file_path = work_path.join("error_output.json");
@@ -144,7 +138,7 @@ async fn compilation_fix_assistant_for_an_error(
     test_name: String,
     insert_kind: InsertKind,
     common: &Vec<String>,
-) -> Result<(Vec<ErrorMessage>, TestCode, u32, u32), ()> {
+) -> io::Result<(Vec<ErrorMessage>, TestCode, u32, u32)> {
     // let mut local_error_group: Vec<ErrorMessage> = Vec::new();
     // local_error_group.push(error_message.clone());
     let mut iterative_time = 0;
@@ -176,35 +170,15 @@ async fn compilation_fix_assistant_for_an_error(
     // file.write_all(final_prompt.as_bytes()).unwrap();
 
     let lock = FIX_LOCK.get_or_init(|| async { Mutex::new(()) }).await;
-    let mut retry = 0;
     let mut completion_tokens = 0;
     let mut prompt_tokens = 0;
 
     while iterative_time < max_time_to_iterative {
         iterative_time += 1;
-        let request_choices_result = get_fixes_from_llm(llm, &final_prompt, 1).await;
-        // let request_choices_result = Err(());
-        // let request_choices_result = read_to_string(work_path.join("fix_request.txt"));
-        let mut request_choices: Vec<String> = Vec::new();
-        if let Ok((s, usage_completion, usage_prompt)) = request_choices_result {
-            completion_tokens += usage_completion;
-            prompt_tokens += usage_prompt;
-            request_choices = s;
-            // request_choices = s.split("ChangeLog:").map(|s| s.to_string()).collect();
-            // request_choices.remove(0);
-        } else {
-            if retry < 3 {
-                retry += 1;
-                max_time_to_iterative += 1;
-                let random_secs = {
-                    let mut rng = rand::rng();
-                    rng.random_range(10..=30)
-                };
-                sleep(Duration::from_secs(random_secs)).await;
-            } else {
-                return Err(());
-            }
-        }
+        let (request_choices, usage_completion, usage_prompt) =
+            llm.get_answer(&final_prompt, 1, false).await?;
+        completion_tokens += usage_completion;
+        prompt_tokens += usage_prompt;
         // for request_choice in request_choices.iter_mut() {
         //     *request_choice = "ChangeLog:".to_string() + request_choice;
         // }
@@ -323,9 +297,9 @@ async fn compilation_fix_assistant_for_one_fn(
     project_dir: PathBuf,
     work_path: PathBuf,
     test_gen_info: TestGenInfo,
-) -> TestGenInfo {
+) -> io::Result<TestGenInfo> {
     let start_time = Instant::now();
-    let timeout = Duration::from_secs(FIX_TIMEOUT); // 设置超时时间为 30 秒
+    let timeout = Duration::from_secs(FIX_TIMEOUT); // Existing between-round limit; not a subprocess deadline.
 
     let mut test_gen_info = test_gen_info;
     let file_rela = test_gen_info.get_file();
@@ -348,8 +322,6 @@ async fn compilation_fix_assistant_for_one_fn(
             common.push("".to_string());
             for chain_test in answer.get_tests_mut().iter_mut() {
                 for (num, test_code) in chain_test.codes.iter_mut().enumerate() {
-                    let mut network_error = false;
-                    let mut network_error_times = 0;
                     if !chain_test.can_compile[num].is_ok() && !chain_test.repaired[num] {
                         let sig = format!("fn test_{}_{:02}()", fn_name, id);
                         let mut fn_code = vec!["#[test]".to_string(), TIMEOUT_DERIVE.to_string()];
@@ -403,43 +375,21 @@ async fn compilation_fix_assistant_for_one_fn(
                             // }
                             // already_rng.push(random_num);
                             let random_error = compile_error_set.get(random_num).unwrap();
-                            let once_fix_result = compilation_fix_assistant_for_an_error(
-                                llm,
-                                &random_error,
-                                &compile_error_set,
-                                &project_dir,
-                                &work_path,
-                                &file_path,
-                                &test_file_content,
-                                sig.clone(),
-                                test_name.clone(),
-                                insert_kind,
-                                &common,
-                            )
-                            .await;
-                            if let Ok((new_error_set, new_error_content, usage_completion, usage_prompt)) = once_fix_result {
-                                compile_error_set = new_error_set;
-                                test_file_content = new_error_content;
-                                completion_tokens += usage_completion;
-                                prompt_tokens += usage_prompt;
-                                // }
-                                if compile_error_set.len() == 0 {
-                                    break;
-                                }
-                            } else {
-                                if network_error_times < 3 {
-                                    network_error_times += 1;
-                                    initial_error_num += 1;
-                                } else {
-                                    network_error = true;
-                                    break;
-                                }
+                            let (new_error_set, new_error_content, usage_completion, usage_prompt) =
+                                compilation_fix_assistant_for_an_error(
+                                    llm, random_error, &compile_error_set, &project_dir, &work_path,
+                                    &file_path, &test_file_content, sig.clone(), test_name.clone(),
+                                    insert_kind, &common,
+                                ).await.map_err(|error| io::Error::other(format!(
+                                    "Repair model request failed for {name}: {error}"
+                                )))?;
+                            compile_error_set = new_error_set;
+                            test_file_content = new_error_content;
+                            completion_tokens += usage_completion;
+                            prompt_tokens += usage_prompt;
+                            if compile_error_set.is_empty() {
+                                break;
                             }
-                            // if new_error_set.len() < compile_error_set.len() {
-                        }
-                        if network_error {
-                            error!("Fix failed for {}: network error", fn_name);
-                            continue;
                         }
                         let sig = format!("fn test_{}_{:02}()", fn_name, id);
                         let mut fn_code = vec!["#[test]".to_string(), TIMEOUT_DERIVE.to_string()];
@@ -479,7 +429,7 @@ async fn compilation_fix_assistant_for_one_fn(
                         drop(guard);
                         if start_time.elapsed() >= timeout {
                             warn!("Fix time out for {}", fn_name);
-                            return test_gen_info;
+                            return Ok(test_gen_info);
                         }
                     }
                 }
@@ -488,7 +438,7 @@ async fn compilation_fix_assistant_for_one_fn(
             answer.set_prompt_tokens(prompt_tokens);
         }
     }
-    test_gen_info
+    Ok(test_gen_info)
 }
 
 fn merge_common_in_code(test_gen_infos: &mut Vec<TestGenInfo>) {
@@ -622,7 +572,7 @@ pub async fn llm_fix(
                 work_path,
                 test_gen_info,
             )
-            .await;
+            .await?;
             let json_path = parent_dir_clone.join(encoded_name + ".json");
             test_gen_info.dump_json(&json_path);
             let completed = counter_clone.fetch_add(1, Ordering::Relaxed) + 1;
