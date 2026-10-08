@@ -3,7 +3,7 @@ use super::{inputprompts, oracleprompts, prefixprompts, testprompts};
 use crate::types::{BrData, ChainTestInfo, TestGenInfo};
 use crate::utils::{
     RestoreOnDrop, TemporaryFile, backup_file, cargo_check, delete_backup, insert_test,
-    restore_file, target_clean, use_check,
+    restore_file, use_check,
 };
 use log::info;
 use std::collections::HashSet;
@@ -440,7 +440,7 @@ pub fn check_unit(test_gen: &mut TestGenInfo, project_dir: &Path, work_dir: &Pat
                     let pos = mod_code.len() - 1;
                     mod_code.splice(pos..pos, insert_code);
                     insert_test(insert_kind, &path, &mod_code);
-                    let _ = target_clean(&work_dir);
+                    // let _ = target_clean(&work_dir);
                     let result = cargo_check(&work_dir);
                     test_info.can_compile[num] = result;
                     // test.can_compile = false;
@@ -502,7 +502,7 @@ pub fn check_integration(test_gen: &mut TestGenInfo, work_dir: &Path) {
                     }
                     code += &(fn_code.join("\n") + "\n");
                     fs::write(&path, code).unwrap();
-                    let _ = target_clean(&work_dir);
+                    // let _ = target_clean(&work_dir);
                     let result = cargo_check(&work_dir);
                     test_info.can_compile[num] = result;
                     id += 1;

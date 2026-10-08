@@ -7,7 +7,7 @@ use crate::{
     FunctionSelection,
     run::TIMEOUT_DERIVE,
     types::TestGenInfo,
-    utils::{backup_file, delete_backup, insert_test, restore_file, target_clean},
+    utils::{backup_file, delete_backup, insert_test, restore_file},
     run::run_all::{prepare_all_unit_tests_for_one_shot_run},
 };
 use log::{error, info};
@@ -317,7 +317,7 @@ pub fn gen_test_rate(
         let mut test_rate_infos: Vec<TestRateInfo> = Vec::new();
         let test_type = TestType::CoverageRate;
         let start_time = SystemTime::now();
-        let _ = target_clean(work_dir);
+        // let _ = target_clean(work_dir);
         let test_output = run_test(project_dir, work_dir, test_type, true, true);
         let end_time = SystemTime::now();
         let test_time = end_time.duration_since(start_time).unwrap().as_secs_f64();
@@ -415,7 +415,7 @@ pub fn gen_test_rate(
                 }
             }
         }
-        let _ = target_clean(work_dir);
+        // let _ = target_clean(work_dir);
         let test_path = work_dir.join("tests");
         let bak_test_path2 = work_dir.join("tests.bak2");
         fs::rename(&test_path, &bak_test_path2).unwrap();
@@ -1431,7 +1431,7 @@ fn gen_coverage_rate_for_original_tests(
     if exists(&bak_test_dir).unwrap() {
         info!("Generate coverage rate for original tests");
         fs::rename(&bak_test_dir, &test_dir).unwrap();
-        let _ = target_clean(work_dir);
+        // let _ = target_clean(work_dir);
         let test_type = TestType::CoverageRate;
         run_test(project_dir, work_dir, test_type, true, false);
         for test_gen_info in test_gen_infos.iter() {

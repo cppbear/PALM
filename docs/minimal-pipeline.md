@@ -34,6 +34,8 @@ The script prints the temporary directory containing source copies, command logs
 
 The regression script runs in Linux CI after the ordinary workspace tests. It uses the real analyzers, compiler, coverage tool, prompt builder, response parser, candidate checks, and repair machinery. Model replies are deterministic fixtures; these results do not measure LLM quality.
 
+Generation, repair, and statistics no longer call the partial `target_clean` helper between candidates. Cargo reuses build artifacts as sources are replaced and restored; analysis still clears the check cache, and coverage retains its own profile cleanup. The task regression preserves the target directory across scenarios and checks compilation failures followed by successful repairs.
+
 ## Coverage Interpretation
 
 `original/original-coverage.json` and `.xml` measure production code exercised by all original unit and integration tests through `utgen coverage`. Test bodies and helpers contribute to neither the coverage numerator nor denominator. The check requires both original `classify` branches to have executed. LLVM can emit separate records for the same branch location in different test binaries; the check unions those outcomes instead of requiring both in one record.
@@ -77,6 +79,6 @@ With four function workers and a two-attempt limit, both generation and repair m
 
 ## Answers Without Tests
 
-Before this fix, a reply such as `fn helper() {}` parsed as Rust and let generation return success with zero candidate tests. Direct-test and prefix generation now require at least one extracted `#[test]` function and reuse the existing three-attempt format retry loop. This does not require assertions in a prefix or judge the semantic quality of a test.
+Before this fix, a reply such as `fn helper() {}` parsed as Rust and let generation return success with zero candidate tests. Direct-test and prefix generation now require at least one extracted `#[test]` function and reuse the existing three-attempt format retry loop, with a fixed one-second wait before each retry and no wait before the first attempt. This does not require assertions in a prefix or judge the semantic quality of a test.
 
 The task regression selects one function and exercises recovery after a helper-only reply, exhaustion after three such replies, and interruption by the shared request budget, in both generation paths. It compares saved raw answers with the server's replies, including code fences, verifies the accepted code is normalized, checks request/token counts, and requires failures to leave no successful candidate or statistics. The recovered tests must compile, pass and cover production code, including a prefix with no assertion before oracle generation. Unit tests additionally cover invalid Rust, imports/comments without tests, empty test modules, and existing helpers/test attributes. All fixtures use fresh generation directories and local HTTP; no full-project model trial is involved.
