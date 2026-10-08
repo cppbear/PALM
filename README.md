@@ -86,7 +86,7 @@ Generation or repair completing does not mean every candidate passes. Inspect bo
 | `build-utils/` | Configure the compiler library search path during builds. |
 | [examples](examples/README.md) | The minimal fixture, bundled bytes target, and usage instructions. |
 | `docker/` | Container build and run scripts. |
-| [docs](docs/README.md) | Technical guide, ASE 2025 materials, and source integration notes. |
+| [docs](docs/README.md) | Technical guide, validation guides, and ASE 2025 materials. |
 
 ## Docker
 
@@ -115,7 +115,6 @@ Bug reports and focused pull requests are welcome. See [CONTRIBUTING.md](CONTRIB
 
 - [Technical guide in Chinese](docs/palm-rust-unit-test-generation.md): architecture, data flow, and usage.
 - [ASE 2025 materials](docs/ase2025/README.md): the original poster and presentation.
-- [Source integration notes](docs/source-integration.md): source repositories, revisions, and branch decisions.
 
 ## Citation
 
@@ -134,4 +133,4 @@ If you use PALM in your research, please cite the ASE 2025 paper. [CITATION.cff]
 
 ## License
 
-PALM is licensed under the [MIT License](LICENSE). The bundled [bytes example](examples/bytes/LICENSE) retains its original MIT license and copyright notice. See [source integration notes](docs/source-integration.md#licensing-and-attribution) for the origins and attribution of included code and materials.
+PALM is licensed under the [MIT License](LICENSE). The bundled [bytes example](examples/bytes/LICENSE) retains its original MIT license and copyright notice. Existing third-party notices and rights in included material remain applicable.
