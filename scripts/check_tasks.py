@@ -221,6 +221,9 @@ def main():
             assert report['attempts'] == state['total'], report
             assert report['responses_without_usage'] == int(missing_usage), report
             assert report['usage_complete'] == (not missing_usage and not state['fault_sent']), report
+            assert report['model'] == 'fixture', report
+            assert report['invocation']['command'] == command[1], report
+            assert report['invocation']['candidate_status'] == ('failed' if fail else 'completed'), report
         return state.copy()
 
     def reset(seed=None):
@@ -232,9 +235,11 @@ def main():
     def command(mode, n, *extra):
         return ['utgen', mode, '-p', str(root), *([] if n == 4 else ['--tasks', str(n)]), *extra]
 
-    def results(directory, compiled):
+    def results(directory, compiled, names=None):
         data = [json.loads(p.read_text()) for p in (root / 'utgen' / directory).glob('*.json')]
-        assert len(data) == count, (directory, len(data))
+        assert len(data) == (len(names) if names is not None else count), (directory, len(data))
+        if names is not None:
+            assert {item['function_name'] for item in data} == set(names), data
         assert all(item['tests_compiled'] == compiled for item in data), data
         if compiled:
             assert all(item['tests_run'] == 1 and item['tests_passed'] == 1
@@ -261,6 +266,80 @@ def main():
             assert measured['total'] == count and measured['peak'] == n, measured
             results('fixed_result', 1)
             assert not (root / 'src/lib.rs.bak').exists()
+
+        # Existing results for other functions must not enter this invocation.
+        nmap = json.loads((root / 'brinfo/name_map.json').read_text())
+        selected = sorted(nmap)[:2]
+        functions_file = work / 'functions.txt'
+        functions_file.write_text('\n' + '\n'.join(selected + [selected[0]]) + '\n')
+        selection_args = ['--functions-file', str(functions_file), '--max-requests', '2']
+        reset(seed)
+        pre_dir = root / 'utgen/generation/pre_fix'
+        for name in selected:
+            (pre_dir / (nmap[name] + '.json')).unlink()
+        untouched = {p: p.read_bytes() for p in pre_dir.glob('*.json')}
+        measured = run('gen-selected', command('gen', 2, *selection_args), limit=2)
+        assert measured['total'] == 2
+        results('result', 0, selected)
+        for path, content in untouched.items():
+            assert path.read_bytes() == content, path
+        report = json.loads((root / 'utgen/generation/gen-requests.json').read_text())
+        assert report['invocation']['functions'] == selected, report
+        assert report['max_requests'] == 2 and not report['budget_exhausted'], report
+
+        missing = pre_dir / (nmap[selected[0]] + '.json')
+        candidate = missing.read_bytes()
+        missing.unlink()
+        measured = run('fix-missing-selected', command('fix', 2, *selection_args), fail=True)
+        assert measured['total'] == 0
+        assert not (root / 'utgen/generation/llm_fix').exists()
+        assert not (root / 'src/lib.rs.bak').exists()
+        missing.write_bytes(candidate)
+
+        fixed_dir = root / 'utgen/generation/llm_fix'
+        fixed_dir.mkdir()
+        other_name = sorted(nmap)[2]
+        other = fixed_dir / (nmap[other_name] + '.json')
+        shutil.copyfile(pre_dir / other.name, other)
+        old_other = other.read_bytes()
+        before_fix = {p: p.read_bytes() for p in pre_dir.glob('*.json')}
+        measured = run('fix-selected', command('fix', 2, *selection_args), limit=2)
+        assert measured['total'] == 2
+        results('fixed_result', 1, selected)
+        assert len(list(fixed_dir.glob('*.json'))) == 3
+        assert other.read_bytes() == old_other
+        for path, content in before_fix.items():
+            assert path.read_bytes() == content, path
+        report = json.loads((root / 'utgen/generation/fix-requests.json').read_text())
+        assert report['invocation']['functions'] == selected, report
+        assert report['max_requests'] == 2 and not report['budget_exhausted'], report
+        measured = run('fix-selected-cached', command('fix', 2, *selection_args))
+        assert measured['total'] == 0
+        report = json.loads((root / 'utgen/generation/fix-requests.json').read_text())
+        assert report['attempts'] == 0 and report['invocation']['functions'] == selected, report
+        assert other.read_bytes() == old_other
+
+        reset(seed)
+        for name in selected:
+            (pre_dir / (nmap[name] + '.json')).unlink()
+        measured = run('integration-selected', command('gen', 2, '--integration', *selection_args),
+                       limit=2, integration=True)
+        assert measured['total'] == 2
+        results('result', 1, selected)
+
+        # More workers than requests: every clone shares the same hard cap.
+        for mode in ['gen', 'fix']:
+            reset(seed if mode == 'fix' else None)
+            measured = run(f'{mode}-budget', command(mode, 4, '--max-requests', '2'), limit=2, fail=True)
+            assert measured['total'] == 2, measured
+            report = json.loads((root / f'utgen/generation/{mode}-requests.json').read_text())
+            assert report['attempts'] == 2 and report['budget_exhausted'], report
+            assert not (root / 'utgen' / ('result' if mode == 'gen' else 'fixed_result')).exists()
+            if mode == 'fix':
+                backup = root / 'src/lib.rs.bak'
+                assert backup.read_text() == original
+                backup.unlink()
+
         for oracle in [False, True]:
             reset()
             preserved = {}

@@ -118,6 +118,57 @@ fn request_timeout_rejects_zero_before_loading_configuration() {
 }
 
 #[test]
+fn request_budget_rejects_zero_before_loading_configuration() {
+    let fixture = Fixture::new();
+    for command in ["gen", "fix"] {
+        let output = fixture
+            .command()
+            .args([command, "-p", ".", "--max-requests", "0"])
+            .env("PALM_CONFIG", "missing.json")
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(error.contains("--max-requests"), "{error}");
+        assert!(!error.contains("Cannot read"), "{error}");
+        assert!(!fixture.0.join("utgen").exists());
+    }
+}
+
+#[test]
+fn invalid_function_lists_fail_before_configuration_or_target_changes() {
+    let fixture = Fixture::new();
+    fs::create_dir(fixture.0.join("brinfo")).unwrap();
+    fs::write(
+        fixture.0.join("brinfo/name_map.json"),
+        r#"{"fixture::known": "known"}"#,
+    )
+    .unwrap();
+    let manifest = fs::read(fixture.0.join("Cargo.toml")).unwrap();
+    for (contents, message) in [
+        ("\n  \n", "contains no function names"),
+        ("fixture::known\nfixture::unknown\n", "Unknown functions"),
+        ("fixture::*\n", "Unknown functions"),
+    ] {
+        fs::write(fixture.0.join("functions.txt"), contents).unwrap();
+        for command in ["gen", "fix"] {
+            let output = fixture
+                .command()
+                .args([command, "-p", ".", "--functions-file", "functions.txt"])
+                .env("PALM_CONFIG", "missing.json")
+                .output()
+                .unwrap();
+            assert!(!output.status.success());
+            let error = String::from_utf8_lossy(&output.stderr);
+            assert!(error.contains(message), "{error}");
+            assert!(!error.contains("Cannot read"), "{error}");
+            assert_eq!(manifest, fs::read(fixture.0.join("Cargo.toml")).unwrap());
+            assert!(!fixture.0.join("utgen").exists());
+        }
+    }
+}
+
+#[test]
 fn analyze_validates_the_crate_without_loading_model_configuration() {
     let fixture = Fixture::new();
     let output = fixture

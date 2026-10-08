@@ -1,4 +1,5 @@
 .vscode/
 target/
 *.txt
+!/examples/bytes-smoke-*.txt
 api.json

@@ -7,6 +7,7 @@ use async_openai::types::{
 use serde::Serialize;
 use std::{
     fs, io,
+    num::NonZeroU64,
     path::Path,
     sync::{Arc, Mutex},
     time::Duration,
@@ -22,6 +23,7 @@ struct RequestStats {
     responses_without_usage: u64,
     reported_completion_tokens: u64,
     reported_prompt_tokens: u64,
+    budget_exhausted: bool,
 }
 
 struct RequestError {
@@ -46,6 +48,7 @@ pub struct LLM {
     config: LlmConfig,
     client: reqwest::Client,
     request_timeout: Duration,
+    max_requests: Option<NonZeroU64>,
     stats: Arc<Mutex<RequestStats>>,
 }
 
@@ -55,6 +58,7 @@ impl LLM {
             config,
             client: reqwest::Client::new(),
             request_timeout: Duration::from_secs(180),
+            max_requests: None,
             stats: Arc::new(Mutex::new(RequestStats::default())),
         }
     }
@@ -68,12 +72,21 @@ impl LLM {
         self.stats.lock().unwrap().attempts
     }
 
+    pub fn with_max_requests(mut self, max_requests: Option<NonZeroU64>) -> Self {
+        self.max_requests = max_requests;
+        self
+    }
+
     /// Persist reported usage, including an explicit incomplete-usage marker.
-    pub fn write_request_summary(&self, path: &Path) -> io::Result<()> {
+    pub fn write_request_summary(&self, path: &Path, invocation: serde_json::Value) -> io::Result<()> {
         let stats = self.stats.lock().unwrap();
         let mut summary = serde_json::to_value(&*stats)?;
         summary["usage_complete"] =
             (stats.failed_attempts == 0 && stats.responses_without_usage == 0).into();
+        summary["model"] = self.config.model.clone().into();
+        summary["request_timeout_seconds"] = self.request_timeout.as_secs_f64().into();
+        summary["max_requests"] = serde_json::to_value(self.max_requests)?;
+        summary["invocation"] = invocation;
         fs::create_dir_all(path.parent().unwrap())?;
         fs::write(path, serde_json::to_vec_pretty(&summary)?)
     }
@@ -151,7 +164,18 @@ impl LLM {
             .build()
             .map_err(io::Error::other)?;
         for attempt in 1..=MAX_ATTEMPTS {
-            self.stats.lock().unwrap().attempts += 1;
+            {
+                let mut stats = self.stats.lock().unwrap();
+                if let Some(max) = self.max_requests {
+                    if stats.attempts >= max.get() {
+                        stats.budget_exhausted = true;
+                        return Err(io::Error::other(format!(
+                            "Model request budget exhausted (--max-requests {max})"
+                        )));
+                    }
+                }
+                stats.attempts += 1;
+            }
             let response = match timeout(self.request_timeout, self.send_once(&request)).await {
                 Ok(result) => result,
                 Err(_) => Err(RequestError {
@@ -394,7 +418,7 @@ mod tests {
         assert_eq!(server.await.unwrap().len(), 1);
         let path =
             std::env::temp_dir().join(format!("palm-request-usage-{}.json", std::process::id()));
-        llm.write_request_summary(&path).unwrap();
+        llm.write_request_summary(&path, serde_json::json!({})).unwrap();
         let summary: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         fs::remove_file(path).unwrap();
         assert_eq!(summary["responses_without_usage"], 1);
@@ -471,6 +495,50 @@ mod tests {
             assert_eq!(server.await.unwrap().len(), 3);
             assert_eq!(llm.stats.lock().unwrap().attempts, 3);
         }
+    }
+
+    #[tokio::test]
+    async fn request_budget_is_shared_across_concurrent_workers_and_retries() {
+        let (llm, server) = mock_replies(vec![reply(503), reply(200), reply(200)]).await;
+        let llm = llm.with_max_requests(NonZeroU64::new(3));
+        let mut workers = tokio::task::JoinSet::new();
+        for _ in 0..9 {
+            let llm = llm.clone();
+            workers.spawn(async move { llm.get_answer("test", 1, false).await });
+        }
+        let mut successes = 0;
+        while let Some(result) = workers.join_next().await {
+            match result.unwrap() {
+                Ok(_) => successes += 1,
+                Err(error) => assert!(error.to_string().contains("budget exhausted")),
+            }
+        }
+        assert_eq!(successes, 2);
+        assert_eq!(server.await.unwrap().len(), 3);
+        let stats = llm.stats.lock().unwrap();
+        assert_eq!((stats.attempts, stats.failed_attempts), (3, 1));
+        assert!(stats.budget_exhausted);
+    }
+
+    #[tokio::test]
+    async fn request_budget_can_stop_a_single_workers_retries() {
+        let (llm, server) = mock_replies(vec![reply(503), reply(503)]).await;
+        let llm = llm.with_max_requests(NonZeroU64::new(2));
+        let error = llm.get_answer("test", 1, false).await.unwrap_err();
+        assert!(error.to_string().contains("budget exhausted"));
+        assert_eq!(server.await.unwrap().len(), 2);
+        let stats = llm.stats.lock().unwrap();
+        assert_eq!((stats.attempts, stats.failed_attempts), (2, 2));
+        assert!(stats.budget_exhausted);
+    }
+
+    #[tokio::test]
+    async fn completing_on_the_last_allowed_attempt_is_successful() {
+        let (llm, server) = mock_replies(vec![reply(503), reply(200)]).await;
+        let llm = llm.with_max_requests(NonZeroU64::new(2));
+        assert!(llm.get_answer("test", 1, false).await.is_ok());
+        assert_eq!(server.await.unwrap().len(), 2);
+        assert!(!llm.stats.lock().unwrap().budget_exhausted);
     }
 
     #[tokio::test]

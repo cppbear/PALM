@@ -1,0 +1,8 @@
+bytes::bytes::bytes::Bytes::len
+bytes::bytes::bytes::Bytes::is_empty
+bytes::bytes::bytes::Bytes::split_off
+bytes::bytes::bytes::Bytes::truncate
+bytes::bytes_mut::bytes_mut::BytesMut::len
+bytes::bytes_mut::bytes_mut::BytesMut::is_empty
+bytes::bytes_mut::bytes_mut::BytesMut::split_off
+bytes::bytes_mut::bytes_mut::BytesMut::truncate

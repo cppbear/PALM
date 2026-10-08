@@ -44,6 +44,23 @@ utgen fix -p "$palm_example_dir"
 
 `--requirement` enables generation for representative condition chains; `--context` includes focal context in the prompt. Both flags are off by default. In unit mode, candidates are stored in JSON and temporarily inserted into the target source for checks and execution.
 
+### Prepare a Small Model Trial
+
+The checked-in [two-function list](bytes-smoke-2.txt) selects `Bytes::len` and `BytesMut::len`. The [eight-function list](bytes-smoke-8.txt) adds `is_empty`, `split_off`, and `truncate` for both types. They cover 2 and 16 representative condition chains respectively. The repeated namespace segments are exact compiler-index names. The analysis regression checks both lists without calling a model.
+
+For a future trial, agree on the model configuration and separate generation/repair attempt limits first. Set `palm_gen_limit` and `palm_fix_limit` to those positive integers, then use the prepared working copy:
+
+```sh
+utgen gen -p "$palm_example_dir" --requirement --context \
+  --functions-file "$palm_repo/examples/bytes-smoke-2.txt" \
+  --max-requests "$palm_gen_limit"
+utgen fix -p "$palm_example_dir" \
+  --functions-file "$palm_repo/examples/bytes-smoke-2.txt" \
+  --max-requests "$palm_fix_limit"
+```
+
+Both commands default to four active function tasks and a 180-second deadline per request attempt. Every retry consumes the command's attempt limit. Review the request reports, candidate compilation/pass counts, coverage, and restored sources before expanding to eight functions on another fresh copy. Keep configuration and generation mode fixed when comparing these runs. No real-model result is claimed by the deterministic checks; the lists and limits prepare that later validation.
+
 ### Integration Test Mode
 
 Use a fresh working copy and repeat extraction and preprocessing before choosing this mode, since existing generation results are reused independently of these flags:
@@ -64,6 +81,7 @@ Paths below are relative to the working copy:
 | `utgen/generation/prompt/` and `answer/` | Generation prompts and model responses. |
 | `utgen/generation/pre_fix/` | Candidate tests and compilation results before repair. |
 | `utgen/generation/llm_fix/` | Candidate tests and compilation results after repair. |
+| `utgen/generation/gen-requests.json` and `fix-requests.json` | Model, invocation selection/options, attempts, limits, token reporting, and candidate-stage status. |
 | `utgen/result/` and `utgen/fixed_result/` | Per-function coverage and execution statistics. |
 
 `coverage.xml` and `coverage.json` are intermediate files and may be removed after parsing. The current implementation writes JSON statistics; it does not generate the `result.html` report mentioned in earlier instructions. See [utgen](../utgen/README.md) for CLI limitations.

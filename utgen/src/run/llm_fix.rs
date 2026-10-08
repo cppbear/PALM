@@ -5,6 +5,7 @@ use super::{
     TIMEOUT_DERIVE,
 };
 use crate::{
+    FunctionSelection,
     gene::LLM,
     types::{InsertKind, TestGenInfo},
     utils::{
@@ -17,7 +18,7 @@ use serde::Deserialize;
 use std::{
     cmp::min,
     collections::{BTreeSet, HashMap},
-    fs::{self, create_dir_all, exists, read_to_string, File},
+    fs::{self, create_dir_all, read_to_string, File},
     i32,
     io::{self, Write},
     path::{Path, PathBuf},
@@ -463,6 +464,7 @@ pub async fn llm_fix(
     llm: &LLM,
     project_path: PathBuf,
     work_path: PathBuf,
+    functions: &FunctionSelection,
     tasks: usize,
 ) -> io::Result<()> {
     if tasks == 0 || tasks > Semaphore::MAX_PERMITS {
@@ -470,66 +472,43 @@ pub async fn llm_fix(
             "--tasks is outside the supported positive range",
         ));
     }
-    let mut test_gen_infos;
-    let pre_dir = project_path.join("utgen/generation/pre_fix");
     let parent_dir = project_path.join("utgen/generation/llm_fix");
     let map_path = work_path.join("brinfo/name_map.json");
     let nmap: HashMap<String, String> =
         serde_json::from_str(&fs::read_to_string(&map_path).unwrap()).unwrap();
 
-    if exists(&parent_dir).unwrap() {
-        for entry in fs::read_dir(pre_dir).unwrap() {
-            let entry = entry.unwrap();
-            let source_path = entry.path();
-            if source_path.is_file() {
-                if let Some(file_name) = source_path.file_name() {
-                    let target_path = parent_dir.join(file_name);
-                    if !target_path.exists() {
-                        fs::copy(&source_path, &target_path).unwrap();
-                    }
-                }
-            }
-        }
-        test_gen_infos = get_test_gen_infos(&project_path, false);
-        merge_common_in_code(&mut test_gen_infos);
-        for test_gen_info in test_gen_infos.iter() {
-            let file_rela = test_gen_info.get_file();
-            let file_path = project_path.join(&file_rela);
-            if (project_path == work_path && !file_rela.starts_with("src"))
-                || (project_path != work_path && !file_path.starts_with(&work_path))
-            {
-                continue;
-            }
-            let json_path =
-                parent_dir.join(nmap.get(test_gen_info.get_name()).unwrap().to_owned() + ".json");
-            test_gen_info.dump_json(&json_path);
-        }
-    } else {
-        create_dir_all(&parent_dir).unwrap();
-        test_gen_infos = get_test_gen_infos(&project_path, true);
-        merge_common_in_code(&mut test_gen_infos);
-        for test_gen_info in test_gen_infos.iter() {
-            let file_rela = test_gen_info.get_file();
-            let file_path = project_path.join(&file_rela);
-            if (project_path == work_path && !file_rela.starts_with("src"))
-                || (project_path != work_path && !file_path.starts_with(&work_path))
-            {
-                continue;
-            }
-            let json_path =
-                parent_dir.join(nmap.get(test_gen_info.get_name()).unwrap().to_owned() + ".json");
-            test_gen_info.dump_json(&json_path);
-        }
-    }
-
+    // Prefer saved repair progress, then add candidates not yet copied from generation.
+    let mut test_gen_infos = get_test_gen_infos(&project_path, false);
+    let saved: BTreeSet<_> = test_gen_infos.iter()
+        .map(|info| info.get_name().to_owned()).collect();
+    test_gen_infos.extend(
+        get_test_gen_infos(&project_path, true).into_iter()
+            .filter(|info| !saved.contains(info.get_name())),
+    );
     test_gen_infos.retain(|info| {
         let relative = info.get_file();
-        if project_path == work_path {
+        let in_work_dir = if project_path == work_path {
             relative.starts_with("src")
         } else {
             project_path.join(relative).starts_with(&work_path)
-        }
+        };
+        in_work_dir && functions.contains(info.get_name())
     });
+    if let Some(names) = functions.names() {
+        for name in names.iter().filter(|name| nmap.contains_key(*name)) {
+            if !test_gen_infos.iter().any(|info| info.get_name() == name) {
+                return Err(io::Error::other(format!(
+                    "No generated candidate for selected function {name}; run gen first"
+                )));
+            }
+        }
+    }
+    merge_common_in_code(&mut test_gen_infos);
+    create_dir_all(&parent_dir)?;
+    for info in &test_gen_infos {
+        let json_path = parent_dir.join(nmap.get(info.get_name()).unwrap().to_owned() + ".json");
+        info.dump_json(&json_path);
+    }
     // Back up each source once before starting workers. Reject stale backups
     // rather than reusing them, and only clean up files owned by this command.
     let sources: BTreeSet<_> = test_gen_infos
