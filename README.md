@@ -90,9 +90,9 @@ Generation or repair completing does not mean every candidate passes. Inspect bo
 
 ## Docker
 
-Run `docker/docker-build` from the repository root to prepare an image with the required toolchain. Mirrors can be configured in `docker/Dockerfile` if needed.
+Run `docker/docker-build` to prepare an image with the pinned analysis toolchain, Python, and cargo-llvm-cov. Both Docker scripts locate the repository from their own paths. Mirrors can be configured in `docker/Dockerfile` if needed.
 
-Run `docker/docker-run` from the same directory to mount the repository at `/home/palm/palm` in the container. In the container, change to that directory and follow [Installation](#installation).
+Run `docker/docker-run` to open a shell in the repository mounted at `/home/palm/palm`, then follow [Installation](#installation). The container is removed when the shell exits; files written in the mounted repository remain on the host. Use working copies of target crates as described above.
 
 ## Development checks
 

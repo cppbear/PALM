@@ -1,11 +1,10 @@
-#!/usr/bin/bash
+#!/usr/bin/env bash
 
-set -e
+set -euo pipefail
+
+repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
 readonly DOCKER_USER="palm"
-readonly CONTAINER_NAME="palm"
-readonly PWD=`pwd`
-
-docker run -it \
-    -v "${PWD}:/home/${DOCKER_USER}/palm" \
-    --name "${CONTAINER_NAME}" palm
+docker run --rm -it \
+    -v "${repo_root}:/home/${DOCKER_USER}/palm" \
+    -w "/home/${DOCKER_USER}/palm" palm
