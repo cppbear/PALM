@@ -110,7 +110,7 @@ pub(crate) fn repaired_candidate(
     let [syn::Item::Mod(module)] = syntax.items.as_slice() else {
         return None;
     };
-    if module.ident != "palm_candidate" {
+    if module.ident != "palm_candidate" || !module.attrs.is_empty() || !syntax.attrs.is_empty() {
         return None;
     }
     let (_, items) = module.content.as_ref()?;
@@ -195,10 +195,7 @@ impl IntegrationInfo {
     }
 }
 
-pub fn gen_integration(
-    test_gen_infos: &Vec<TestGenInfo>,
-    work_dir: &Path,
-) -> Vec<IntegrationInfo> {
+pub fn gen_integration(test_gen_infos: &Vec<TestGenInfo>, work_dir: &Path) -> Vec<IntegrationInfo> {
     info!("Generate integration tests!");
     let mut integration_infos = Vec::new();
     for test_gen in test_gen_infos.iter().filter(|info| info.get_visibility()) {
@@ -259,4 +256,36 @@ pub fn gen_integration(
         integration_infos.push(result);
     }
     integration_infos
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repair_cannot_disable_the_candidate_to_hide_a_compile_error() {
+        let context = IntegrationContext {
+            uses: vec![],
+            common: vec![],
+        };
+        let code = candidate_code(
+            &context,
+            &[],
+            &["{ missing(); }".to_string()],
+            "palm_candidate",
+            "test_candidate",
+            false,
+        );
+        assert!(repaired_candidate(&code, &[]).is_some());
+        // Rust would accept this by compiling no tests. It must not be saved
+        // as a successful repair and then reconstructed without the cfg.
+        let mut disabled = code.clone();
+        disabled.insert(0, "#[cfg(any())]".to_string());
+        assert!(repaired_candidate(&disabled, &[]).is_none());
+        let removed = code
+            .into_iter()
+            .filter(|line| line != "#[test]")
+            .collect::<Vec<_>>();
+        assert!(repaired_candidate(&removed, &[]).is_none());
+    }
 }
