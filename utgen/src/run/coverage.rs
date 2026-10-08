@@ -181,6 +181,14 @@ fn coverage_command(work_dir: &Path, args: &[&str]) -> io::Result<Output> {
 /// and optionally JSON from that run. Use a standalone crate working copy.
 /// Test assertion failures are retained in the output; build/report errors fail.
 pub fn collect_coverage(work_dir: &Path, json: bool) -> io::Result<Output> {
+    collect_coverage_for_tests(work_dir, json, &[])
+}
+
+pub(crate) fn collect_coverage_for_tests(
+    work_dir: &Path,
+    json: bool,
+    targets: &[String],
+) -> io::Result<Output> {
     let canonical_dir = work_dir.canonicalize()?;
     let work_dir = canonical_dir.as_path();
     let metadata = MetadataCommand::new()
@@ -231,17 +239,22 @@ pub fn collect_coverage(work_dir: &Path, json: bool) -> io::Result<Output> {
         }
         // The first command uses llvm-cov's default cleanup. --no-report would
         // imply --no-clean and mix profiles from different generated candidates.
-        let output = coverage_command(
-            work_dir,
-            &[
-                "--tests",
-                "--ignore-run-fail",
-                "--branch",
-                "--cobertura",
-                "--output-path",
-                "coverage.xml",
-            ],
-        )?;
+        let mut args = Vec::new();
+        if targets.is_empty() {
+            args.push("--tests");
+        } else {
+            for target in targets {
+                args.extend(["--test", target.as_str()]);
+            }
+        }
+        args.extend([
+            "--ignore-run-fail",
+            "--branch",
+            "--cobertura",
+            "--output-path",
+            "coverage.xml",
+        ]);
+        let output = coverage_command(work_dir, &args)?;
         if json {
             coverage_command(
                 work_dir,

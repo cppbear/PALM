@@ -73,6 +73,9 @@ enum Command {
     Fix {
         #[command(flatten)]
         options: Opts,
+        /// Repair and evaluate candidates as integration tests under tests/
+        #[arg(short, long)]
+        integration: bool,
         /// Maximum active function-repair tasks; compilation stays serial
         #[arg(short, long, default_value = "4")]
         tasks: NonZeroUsize,
@@ -247,6 +250,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // fix unit tests
         Command::Fix {
             options,
+            integration,
             tasks,
             request_timeout,
             functions_file,
@@ -271,6 +275,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         work_dir.clone(),
                         &functions,
                         tasks.get(),
+                        integration,
                     )
                     .await?;
                 }
@@ -282,7 +287,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     &project_dir.join("utgen/generation/fix-requests.json"),
                     serde_json::json!({
                         "command": "fix", "functions": functions.names(),
-                        "project_dir": project_dir, "work_dirs": work_dirs, "tasks": tasks,
+                        "project_dir": project_dir, "work_dirs": work_dirs, "tasks": tasks, "integration": integration,
                         "candidate_status": if repaired.is_ok() { "completed" } else { "failed" },
                         "error": repaired.as_ref().err().map(ToString::to_string),
                     }),
@@ -294,7 +299,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             recorded?;
             //gen_test_rate_aggregated(&project_dir, false);
             for work_dir in work_dirs.iter() {
-                gen_test_rate(&project_dir, &work_dir, false, false, &functions);
+                gen_test_rate(&project_dir, &work_dir, integration, false, &functions);
             }
         }
     }

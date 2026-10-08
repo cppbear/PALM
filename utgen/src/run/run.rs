@@ -359,12 +359,23 @@ pub fn gen_test_rate(
             gen_coverage_rate_for_original_tests(project_dir, work_dir, &test_gen_infos);
         }
     } else {
-        let integration_infos = gen_integration(&test_gen_infos, project_dir, work_dir);
+        let integration_infos = gen_integration(&test_gen_infos, work_dir);
         let mut test_rate_infos: Vec<TestRateInfo> = Vec::new();
-        let test_type = TestType::CoverageRate;
         let start_time = SystemTime::now();
         // let _ = target_clean(work_dir);
-        let test_output = run_test(project_dir, work_dir, test_type, true, true);
+        if integration_infos.is_empty() {
+            return;
+        }
+        let targets = integration_infos
+            .iter()
+            .map(|info| info.file_name.clone())
+            .collect::<Vec<_>>();
+        let output = super::coverage::collect_coverage_for_tests(work_dir, true, &targets)
+            .expect("Failed to collect integration coverage");
+        let test_output = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
         let end_time = SystemTime::now();
         let test_time = end_time.duration_since(start_time).unwrap().as_secs_f64();
         for integration_info in integration_infos.iter() {
@@ -455,17 +466,16 @@ pub fn gen_test_rate(
                 if already_test_rate_info.function_name == integration_info.function_name {
                     already_test_rate_info.tests_run = tests;
                     already_test_rate_info.tests_passed = passed_tests;
-                    already_test_rate_info.tests_passed_rate =
-                        passed_tests as f64 / tests as f64 * 100.0;
+                    already_test_rate_info.tests_passed_rate = if tests > 0 {
+                        passed_tests as f64 / tests as f64 * 100.0
+                    } else {
+                        0.0
+                    };
                     break;
                 }
             }
         }
         // let _ = target_clean(work_dir);
-        let test_path = work_dir.join("tests");
-        let bak_test_path2 = work_dir.join("tests.bak2");
-        let generated_tests = MovedTestDirectory::new(&test_path, &bak_test_path2)
-            .expect("cannot temporarily move generated tests");
         gen_codes_lines_and_branches_covered(
             project_dir,
             work_dir,
@@ -480,6 +490,10 @@ pub fn gen_test_rate(
             false,
             test_time,
         );
+        let test_path = work_dir.join("tests");
+        let bak_test_path2 = work_dir.join("tests.bak2");
+        let generated_tests = MovedTestDirectory::new(&test_path, &bak_test_path2)
+            .expect("cannot temporarily move generated tests");
         if is_pre {
             gen_coverage_rate_for_original_tests(project_dir, work_dir, &test_gen_infos);
         }
@@ -1188,72 +1202,61 @@ fn gen_codes_lines_and_branches_covered(
     test_gen_infos: &Vec<TestGenInfo>,
     test_rate_infos: &mut Vec<TestRateInfo>,
 ) {
-    for test_rate_info in test_rate_infos.iter_mut() {
-        let function_name = test_rate_info.function_name.clone();
-        for test_gen_info in test_gen_infos.iter() {
-            if function_name != test_gen_info.get_name().to_string() {
-                continue;
-            }
-            let file_rela = test_gen_info.get_file();
-            let file_path = project_dir.join(&file_rela);
-            let name = test_gen_info.get_name().to_string();
-            let fn_name = name.split("::").last().unwrap();
-            info!("Generate codes lines and branches for {}", fn_name);
-            let insert_kind = test_gen_info.get_insert_kind();
-            let template = include_str!("../../res/code_template.json");
-            let code_template: Vec<String> = serde_json::from_str(template).unwrap();
-            backup_file(Path::new(&file_path));
-            for chain_test in test_gen_info.get_tests().iter() {
-                for answer in chain_test.get_answers().iter() {
-                    for test in answer.get_tests().iter() {
-                        for (num, test_code) in test.codes.iter().enumerate() {
-                            if test.can_compile[num].is_ok() {
-                                let mut mod_code = code_template.clone();
-                                let mut common = answer.get_common().clone();
-                                common.push("".to_string());
-                                let pos = mod_code.len() - 1;
-                                mod_code.splice(pos..pos, common);
-                                let sig = format!("fn test_{}_{:02}()", fn_name, num);
-                                info!("Running test fn test_{}_{:02}()", fn_name, num);
-                                let fn_code = timed_test(&sig, &test.attrs, test_code);
-                                let pos = mod_code.len() - 1;
-                                mod_code.splice(pos..pos, fn_code);
-                                insert_test(insert_kind, Path::new(&file_path), &mod_code);
-                                // let _ = target_clean(work_dir);
-                                let test_type = TestType::CoverageRate;
-                                let test_name = format!("test_{}", fn_name);
-                                run_test(project_dir, work_dir, test_type, true, false);
-                                let loc = test_gen_info.get_loc();
-                                let begin = loc.get_startline() as i32;
-                                let end = loc.get_endline() as i32;
-                                gen_one_codes_lines(
-                                    project_dir,
-                                    work_dir,
-                                    &name,
-                                    &file_path,
-                                    begin,
-                                    end,
-                                    &test_code,
-                                    test_rate_info,
-                                );
-                                gen_one_codes_branchs(
-                                    project_dir,
-                                    work_dir,
-                                    &function_name,
-                                    &file_path,
-                                    begin,
-                                    end,
-                                    &test_code,
-                                    test_rate_info,
-                                );
-                                restore_file(Path::new(&file_path));
-                            }
+    for rate in test_rate_infos {
+        let info = test_gen_infos
+            .iter()
+            .find(|info| info.get_name() == rate.function_name)
+            .unwrap();
+        let initial = integration::initial_uses(info, work_dir);
+        let file_path = project_dir.join(info.get_file());
+        let loc = info.get_loc();
+        for chain in info.get_tests() {
+            for answer in chain.get_answers() {
+                for test in answer.get_tests() {
+                    for (num, body) in test.codes.iter().enumerate() {
+                        if test.can_compile[num].is_err() {
+                            continue;
                         }
+                        let context = integration::candidate_context(answer, test, num, &initial);
+                        let code = integration::candidate_code(
+                            &context,
+                            &test.attrs,
+                            body,
+                            "palm_candidate",
+                            "test_candidate",
+                            true,
+                        );
+                        let temporary = integration::write_candidate(work_dir, &code).unwrap();
+                        super::coverage::collect_coverage_for_tests(
+                            work_dir,
+                            true,
+                            &[integration::CANDIDATE_TARGET.to_string()],
+                        )
+                        .expect("Failed to collect candidate coverage");
+                        gen_one_codes_lines(
+                            project_dir,
+                            work_dir,
+                            &info.get_name().to_string(),
+                            &file_path,
+                            loc.get_startline() as i32,
+                            loc.get_endline() as i32,
+                            body,
+                            rate,
+                        );
+                        gen_one_codes_branchs(
+                            project_dir,
+                            work_dir,
+                            &info.get_name().to_string(),
+                            &file_path,
+                            loc.get_startline() as i32,
+                            loc.get_endline() as i32,
+                            body,
+                            rate,
+                        );
+                        temporary.finish().unwrap();
                     }
                 }
             }
-            delete_backup(&file_path);
-            break;
         }
     }
 }

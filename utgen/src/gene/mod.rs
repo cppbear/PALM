@@ -73,6 +73,18 @@ pub async fn gen_tests_project(
         ));
     }
     validate_analysis(project_dir, work_dir)?;
+    let saved_dir = project_dir.join("utgen/generation/pre_fix");
+    if saved_dir.is_dir() {
+        for entry in fs::read_dir(saved_dir)? {
+            let path = entry?.path();
+            if path.is_file() {
+                let info = TestGenInfo::from_json(&path);
+                if functions.contains(info.get_name()) {
+                    info.check_mode(integration)?;
+                }
+            }
+        }
+    }
     add_ntest_dependency(work_dir);
     let brdata_dir = work_dir.join("brinfo/brdata");
     let map_path = work_dir.join("brinfo/name_map.json");
@@ -164,6 +176,7 @@ pub async fn gen_tests_project(
             let work_dir = work_dir.to_owned();
             // Await exactly one validation at a time, without blocking model tasks.
             let checked = tokio::task::spawn_blocking(move || {
+                test_gen_info.integration = integration;
                 if integration {
                     check_integration(&mut test_gen_info, &work_dir);
                 } else {

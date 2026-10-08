@@ -26,6 +26,8 @@ pub enum InsertKind {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TestGenInfo {
+    #[serde(default)]
+    pub integration: bool,
     name: String,
     name_with_impl: String,
     mod_info: ModInfo,
@@ -44,6 +46,7 @@ impl TestGenInfo {
         fn_tests: Vec<ChainTestInfo>,
     ) -> TestGenInfo {
         TestGenInfo {
+            integration: false,
             name,
             name_with_impl,
             mod_info,
@@ -61,6 +64,16 @@ impl TestGenInfo {
         } else {
             return InsertKind::EOM(self.mod_info.loc.get_endline());
         }
+    }
+
+    pub fn check_mode(&self, integration: bool) -> std::io::Result<()> {
+        if self.integration != integration {
+            return Err(std::io::Error::other(format!(
+                "Test mode mismatch for {}; use the same --integration setting for gen and fix, or generate in a fresh working copy",
+                self.name
+            )));
+        }
+        Ok(())
     }
 
     pub fn get_file(&self) -> String {
@@ -256,6 +269,12 @@ impl ChainTestAnswer {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IntegrationContext {
+    pub uses: Vec<String>,
+    pub common: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TestInfo {
     pub attrs: Vec<String>,
     pub prefix: Vec<String>,
@@ -263,6 +282,9 @@ pub struct TestInfo {
     pub codes: Vec<Vec<String>>,
     pub can_compile: Vec<Result<(), String>>,
     pub repaired: Vec<bool>,
+    // Repair may change imports/helpers for one candidate without changing its siblings.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub integration_contexts: Vec<IntegrationContext>,
 }
 
 impl TestInfo {
@@ -275,6 +297,7 @@ impl TestInfo {
             codes,
             can_compile: vec![Ok(()); len],
             repaired: vec![false; len],
+            integration_contexts: Vec::new(),
         }
     }
 
