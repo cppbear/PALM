@@ -315,7 +315,7 @@ utgen/res/api.json
 export PALM_CONFIG="$(pwd)/utgen/res/api.json"
 ```
 
-当前 PALM 请求固定使用非流式输出、单个回答，并设置 `max_tokens=10000`、`temperature=1.0`、`top_p=0`。这些参数来自现有实现，整合时保持原样。
+当前 PALM 请求固定使用非流式输出、单个回答，并设置 `max_tokens=10000`。采样使用所选模型的默认设置，不再发送写死的 `temperature=1.0` 和 `top_p=0`，以兼容拒绝这些可选参数的服务。
 
 ### 8.3 Prompt 构建
 

@@ -156,8 +156,6 @@ impl LLM {
         let request = CreateChatCompletionRequestArgs::default()
             .model(&self.config.model)
             .max_tokens(10000_u32)
-            .temperature(1.0)
-            .top_p(0_f32)
             .n(1)
             .stream(false)
             .messages(messages)
@@ -335,8 +333,8 @@ mod tests {
     fn check_request(request: &serde_json::Value) {
         assert_eq!(request["model"], "local-model");
         assert_eq!(request["max_tokens"], 10000);
-        assert_eq!(request["temperature"], 1.0);
-        assert_eq!(request["top_p"], 0.0);
+        assert!(request.get("temperature").is_none());
+        assert!(request.get("top_p").is_none());
         assert_eq!(request["n"], 1);
         assert_eq!(request["stream"], false);
     }
@@ -346,8 +344,8 @@ mod tests {
         // Set proxy variables only in child processes: changing the current
         // process environment would race with parallel Rust tests.
         for name in [
-            "gene::llm::tests::generation_uses_runtime_config_and_preserves_request_parameters",
-            "gene::llm::tests::repair_uses_runtime_config_and_preserves_request_parameters",
+            "gene::llm::tests::generation_uses_runtime_config_and_model_sampling_defaults",
+            "gene::llm::tests::repair_uses_runtime_config_and_model_sampling_defaults",
         ] {
             let mut command = std::process::Command::new(std::env::current_exe().unwrap());
             command.args([name, "--exact"]);
@@ -373,7 +371,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn generation_uses_runtime_config_and_preserves_request_parameters() {
+    async fn generation_uses_runtime_config_and_model_sampling_defaults() {
         let (llm, server) = mock_model().await;
         let (answers, completion, prompt) = timeout(
             Duration::from_secs(10),
@@ -391,7 +389,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn repair_uses_runtime_config_and_preserves_request_parameters() {
+    async fn repair_uses_runtime_config_and_model_sampling_defaults() {
         let (llm, server) = mock_model().await;
         let (answers, completion, prompt) = timeout(
             Duration::from_secs(10),
