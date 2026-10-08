@@ -94,6 +94,8 @@ Run `docker/docker-build` to prepare an image with the pinned analysis toolchain
 
 Run `docker/docker-run` to open a shell in the repository mounted at `/home/palm/palm`, then follow [Installation](#installation). The container is removed when the shell exits; files written in the mounted repository remain on the host. Use working copies of target crates as described above.
 
+The [Docker CI workflow](.github/workflows/docker.yml) checks image construction and tool installation when Docker or build-environment files change. Its manual `full_pipeline` option also runs the minimal offline pipeline inside the container; see [CI scope](docs/build-validation.md#ci-and-further-checks).
+
 ## Development checks
 
 From the repository root, using the pinned toolchain:

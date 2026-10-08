@@ -1,0 +1,90 @@
+name: Docker checks
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docker/**'
+      - '.github/workflows/docker.yml'
+      - 'install.sh'
+      - '**/rust-toolchain.toml'
+      - '**/Cargo.toml'
+      - '**/Cargo.lock'
+      - '**/build.rs'
+      - 'build-utils/**'
+      - '.cargo/**'
+  pull_request:
+    paths:
+      - 'docker/**'
+      - '.github/workflows/docker.yml'
+      - 'install.sh'
+      - '**/rust-toolchain.toml'
+      - '**/Cargo.toml'
+      - '**/Cargo.lock'
+      - '**/build.rs'
+      - 'build-utils/**'
+      - '.cargo/**'
+  workflow_dispatch:
+    inputs:
+      full_pipeline:
+        description: Run the minimal offline pipeline after installation
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  docker-build-and-install:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Check Docker script syntax
+        run: bash -n docker/docker-build docker/docker-run
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build and load the image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ./docker
+          platforms: linux/amd64
+          tags: palm:ci
+          load: true
+          push: false
+          cache-from: type=gha,scope=palm-docker-amd64
+          cache-to: type=gha,mode=max,scope=palm-docker-amd64
+      - name: Check the container environment and install PALM
+        env:
+          FULL_PIPELINE: ${{ inputs.full_pipeline || false }}
+        run: |
+          docker run --rm -i \
+            --mount "type=bind,source=$GITHUB_WORKSPACE,target=/checkout,readonly" \
+            --env FULL_PIPELINE \
+            palm:ci bash -se <<'CONTAINER'
+          python3 --version
+          palm_toolchain=$(python3 -c 'import tomllib; print(tomllib.load(open("/checkout/rust-toolchain.toml", "rb"))["toolchain"]["channel"])')
+          rustup run "$palm_toolchain" rustc --version
+          rustup component list --toolchain "$palm_toolchain" --installed
+          cargo llvm-cov --version | grep -Fx 'cargo-llvm-cov 0.6.16'
+
+          palm_work=$(mktemp -d /tmp/palm-docker-check.XXXXXX)
+          cp -R /checkout/. "$palm_work/"
+          cd "$palm_work"
+          export CARGO_TARGET_DIR="$palm_work/target"
+          ./install.sh
+          cargo brinfo --help
+          cargo call-chain --help
+          focxt --help
+          utgen --help
+
+          if [[ "$FULL_PIPELINE" == "true" ]]; then
+            python3 scripts/check_minimal.py --bin-dir "$HOME/.cargo/bin"
+          fi
+          CONTAINER
