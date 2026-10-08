@@ -10,6 +10,9 @@ pub trait PromptTemplate {
     where
         Self: Sized;
     fn system(&self) -> &str;
+    fn unit(&self) -> Option<&str> {
+        None
+    }
     fn integration(&self) -> Option<&str>;
     fn context(&self) -> &str;
     fn focal(&self) -> &str;
@@ -30,11 +33,17 @@ impl<T: PromptTemplate> PromptBuilder<T> {
     }
 
     pub fn build_system(&self, integration: bool) -> String {
-        if integration {
-            self.template.system().to_string() + self.template.integration().unwrap_or_default()
+        let scope = if integration {
+            self.template.integration()
         } else {
-            self.template.system().to_string()
+            self.template.unit()
+        };
+        let mut system = self.template.system().to_string();
+        if let Some(scope) = scope {
+            system.push('\n');
+            system.push_str(scope);
         }
+        system
     }
 
     pub fn build_static(&self, brdata: &BrData, requirement: bool, context: bool) -> String {

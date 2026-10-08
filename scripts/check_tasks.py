@@ -116,9 +116,25 @@ def main():
                 if 'The function to be tested is presented as follows:' in user:
                     focal = user.split('The function to be tested is presented as follows:', 1)[1]
                     function = re.search(r'\bfn (f\d+)\(', focal).group(1)
-                    if 'infer the test input ranges' in system:
+                    is_input = 'infer the test input ranges' in system
+                    is_oracle = 'generate accurate test oracles' in system
+                    if is_input or state['integration']:
+                        assert 'use super::*;' not in system, 'unit scope leaked into another prompt'
+                    else:
+                        assert 'child test module inside the crate under test' in system
+                        assert 'use super::*;' in system and 'crate::' in system
+                        assert 'not an external dependency' in system
+                    if state['integration'] and not is_input:
+                        assert 'publicly accessible' in system
+                        if not is_oracle:
+                            assert 'separate folder' in system
+                    if is_oracle:
+                        assert 'do not output complete test functions' in system.lower()
+                    if 'Omit test oracles' in system:
+                        assert 'Omit test oracles and assertions' in system
+                    if is_input:
                         answer = 'x = 1'
-                    elif 'generate accurate test oracles' in system:
+                    elif is_oracle:
                         answer = 'assert_eq!(actual, 2);'
                     else:
                         argument = '1' if state['integration'] or state['invalid_answers'] else '"bad"'

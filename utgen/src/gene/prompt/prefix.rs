@@ -4,6 +4,7 @@ use serde::Deserialize;
 #[derive(Debug, Clone, Deserialize)]
 pub struct PrefixTemplate {
     system: String,
+    unit: String,
     integration: String,
     context: String,
     focal: String,
@@ -22,6 +23,10 @@ impl PromptTemplate for PrefixTemplate {
 
     fn integration(&self) -> Option<&str> {
         Some(&self.integration)
+    }
+
+    fn unit(&self) -> Option<&str> {
+        Some(&self.unit)
     }
 
     fn context(&self) -> &str {
