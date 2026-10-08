@@ -41,6 +41,7 @@ The default binary directory is `target/debug`. The coverage tool must be availa
 | Coverage | Excludes test bodies and test-only helpers, preserves production coverage, and executes tests once when exporting XML and JSON. |
 | Cleanup | Restores sources after the covered success, assertion-failure, compilation-failure, and report-export-failure cases. |
 | Candidate timeout | Ordinary and `should_panic` infinite loops count as failures; an expected panic and a later ordinary test pass in unit and integration statistics. |
+| Integration repair | Repairs alias/trait imports, helpers, and test bodies in integration targets; keeps sibling candidates independent; checks cached repair, mode mismatch, unselected targets, and cleanup after request failure. |
 | Integration directories | Original and generated tests coexist after normal runs and cached reruns; original-test compilation failure restores both directories; an existing staging directory is preserved and reported. |
 
 The integration-directory cases retain the original `tests.bak/` while generating `tests/`. They use one cached candidate and make no additional model requests. Separate timeout cases also check integration execution without an original-test backup.
@@ -63,7 +64,7 @@ Explicit `coverage(on)` is respected. Expression fragments are preserved; the ch
 
 `check_tasks.py` exercises function limits N=1, N=2, and the default N=4, with more than 2N functions in each scheduling case. It checks overlapping model requests, serial compiler activity, bounded-queue backpressure, and completion after queued work resumes. Cargo's target directory is reused between scenarios.
 
-Additional cases cover direct and input/prefix/oracle generation, integration imports, function selection, request budgets, and worker/consumer failures. Checks require source restoration, preservation of unrelated backups, retention of repair backups on failure, and skipped statistics after a candidate-stage error.
+Additional cases cover direct and input/prefix/oracle generation, integration imports and repair concurrency, function selection, request budgets, and worker/consumer failures. Checks require source restoration, preservation of unrelated backups, retention of repair backups on failure, and skipped statistics after a candidate-stage error.
 
 ## Model Request Regression
 

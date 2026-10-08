@@ -202,7 +202,7 @@ def main():
     finally:
         lib.write_bytes(saved_lib)
     assert snapshot(original) == baseline
-    state = {'generation': 0, 'repair': 0, 'errors': []}
+    state = {'generation': 0, 'repair': 0, 'errors': [], 'integration': False, 'reject_repair': False}
 
     class Model(http.server.BaseHTTPRequestHandler):
         def log_message(self, *_):
@@ -226,19 +226,60 @@ def main():
                         'double': 'assert_eq!(double("bad"), 4);',
                     }[function]
                     answer = 'fn generated_helper() -> i32 { 1 }\n#[test]\nfn generated() {\n    assert_eq!(generated_helper(), 1);\n    ' + body + '\n}\n'
+                    if state['integration']:
+                        answer = {
+                            'classify': '''use std::cmp::max as target;
+use std::fmt::Write;
+fn helper() -> i32 { 1 }
+#[test]
+fn alias_case() {
+    let mut buffer = Vec::new();
+    buffer.write_all(b"x").unwrap();
+    assert_eq!(target(2), helper());
+}
+#[test]
+fn sibling_case() {
+    assert_eq!(target(2, 1), 2);
+    assert_eq!(palm_fixture::classify(-1), 0);
+}
+''',
+                            'double': '''use palm_fixture::nested::double as twice;
+fn helper() -> i32 { "bad-helper" }
+#[test]
+fn body_case() {
+    assert_eq!(twice("bad-body") + helper(), 5);
+}
+''',
+                        }[function]
                     state['generation'] += 1
                 else:
                     file = re.search(r'You can only modify lines \d+ to \d+ in file (.+?)\. For your answer', user).group(1)
-                    match = re.search(r'^\[(\d+)\](.*assert_eq!\(double\("bad"\), 4\);.*)$', user, re.M)
-                    assert match, 'repair prompt lacks numbered failing statement'
-                    number, old = match.groups()
-                    new = old.replace('double("bad")', 'double(2)')
-                    answer = f'ChangeLog:1@{file}\nFixDescription: Use an integer argument.\nOriginalCode@{number}-{number}:\n[{number}]{old}\nFixedCode@{number}-{number}:\n[{number}]{new}\n'
+                    replacements = {
+                        'double("bad")': 'double(2)',
+                        'use std::cmp::max as target;': 'use palm_fixture::classify as target;',
+                        'use std::fmt::Write;': 'use std::io::Write;',
+                        '"bad-helper"': '1',
+                        '"bad-body"': '2',
+                    }
+                    changes = {}
+                    for number, old in re.findall(r'^\[(\d+)\](.*)$', user, re.M):
+                        new = old
+                        for before, after in replacements.items():
+                            new = new.replace(before, after)
+                        if new != old:
+                            changes[number] = (old, new)
+                    assert changes, 'repair prompt lacks numbered failing code'
+                    answer = f'ChangeLog:1@{file}\nFixDescription: Fix candidate imports and arguments.\n'
+                    for number, (old, new) in changes.items():
+                        answer += f'OriginalCode@{number}-{number}:\n[{number}]{old}\nFixedCode@{number}-{number}:\n[{number}]{new}\n'
                     state['repair'] += 1
                 response = {'id': 'fixture', 'object': 'chat.completion', 'created': 0, 'model': 'fixture',
                             'choices': [{'index': 0, 'message': {'role': 'assistant', 'content': answer}, 'finish_reason': 'stop'}],
                             'usage': {'prompt_tokens': 1, 'completion_tokens': 1, 'total_tokens': 2}}
                 code = 200
+                if state['reject_repair']:
+                    response = {'error': {'message': 'fixture request rejected'}}
+                    code = 401
             except Exception as error:
                 state['errors'].append(str(error))
                 response = {'error': {'message': str(error), 'type': 'fixture_error'}}
@@ -307,6 +348,8 @@ def main():
         timeout_prepared = snapshot(target)
         requests_before = (state['generation'], state['repair'])
         for integration in [False, True]:
+            data['integration'] = integration
+            candidate.write_text(json.dumps(data, indent=2) + '\n')
             run(f'candidate-timeouts-{integration}',
                 ['utgen', 'gen', '-p', str(target), '--functions-file', str(selection),
                  *(['--integration'] if integration else [])], timeout=90)
@@ -376,6 +419,89 @@ def main():
         assert report['attempts'] == 0, report
         shutil.rmtree(target / 'tests')
         assert snapshot(target) == prepared
+
+        # Exercise the complete integration path with real Rust diagnostics.
+        # One answer has two candidates needing different meanings of `target`.
+        state['integration'] = True
+        selected_names = [selected, 'palm_fixture::nested::double']
+        integration_selection = work / 'integration-functions.txt'
+        integration_selection.write_text('\n'.join(selected_names) + '\n')
+        for directory in ['generation/pre_fix', 'generation/llm_fix']:
+            for name in selected_names:
+                (target / 'utgen' / directory / (names[name] + '.json')).unlink()
+        integration_args = ['-p', str(target), '--functions-file', str(integration_selection),
+                            '--integration', '--tasks', '2', '--max-requests', '8']
+        run('integration-generate-imports', ['utgen', 'gen', *integration_args])
+        for name, compiled in zip(selected_names, [1, 0]):
+            result = json.loads((target / f'utgen/result/{names[name]}.json').read_text())
+            assert result['tests_compiled'] == result['tests_run'] == compiled, result
+        source_before = {p: content for p, content in snapshot(target).items() if not p.startswith('tests/')}
+        assert source_before == prepared
+        # Unselected targets must neither pollute diagnostics nor be executed.
+        unrelated = target / 'tests/unrelated.rs'
+        unrelated.write_text('compile_error!("unselected test must not compile");\n')
+        temporary_file = target / 'tests/palm_candidate.rs'
+        temporary_file.write_text('compile_error!("pre-existing temporary path");\n')
+        before_fix = snapshot(target)
+        requests_before = (state['generation'], state['repair'])
+        wrong_mode = run('integration-reject-unit-fix',
+                         ['utgen', 'fix', '-p', str(target), '--functions-file', str(integration_selection)], expected=1)
+        assert 'Test mode mismatch' in wrong_mode.stderr
+        assert snapshot(target) == before_fix
+        assert (state['generation'], state['repair']) == requests_before
+        wrong_mode = run('integration-reject-unit-gen',
+                         ['utgen', 'gen', '-p', str(target), '--functions-file', str(integration_selection)], expected=1)
+        assert 'Test mode mismatch' in wrong_mode.stderr
+        assert snapshot(target) == before_fix
+        assert (state['generation'], state['repair']) == requests_before
+        run('integration-repair-imports', ['utgen', 'fix', *integration_args])
+        assert state['repair'] > requests_before[1]
+        for name, count in zip(selected_names, [2, 1]):
+            result = json.loads((target / f'utgen/fixed_result/{names[name]}.json').read_text())
+            assert result['tests'] == result['tests_compiled'] == result['tests_run'] == result['tests_passed'] == count, result
+            assert len(result['codes_lines_covered']) == count, result
+            assert result['lines_covered'] > 0, result
+        fixed_path = target / f'utgen/generation/llm_fix/{names[selected]}.json'
+        fixed = json.loads(fixed_path.read_text())
+        tests = fixed['fn_tests'][0]['answers'][0]['chain_tests']
+        assert 'use palm_fixture::classify as target;' in tests[0]['integration_contexts'][0]['uses']
+        assert 'use std::io::Write;' in tests[0]['integration_contexts'][0]['uses']
+        assert 'use std::cmp::max as target;' in tests[1]['integration_contexts'][0]['uses']
+        assert {p: content for p, content in snapshot(target).items() if not p.startswith('tests/')} == prepared
+        assert unrelated.read_bytes() == before_fix['tests/unrelated.rs']
+        assert temporary_file.read_bytes() == before_fix['tests/palm_candidate.rs']
+        assert not list((target / 'src').rglob('*.bak'))
+        stable = snapshot(target)
+        requests_before = (state['generation'], state['repair'])
+        run('integration-repair-cached', ['utgen', 'fix', *integration_args])
+        assert snapshot(target) == stable
+        assert (state['generation'], state['repair']) == requests_before
+        report = json.loads((target / 'utgen/generation/fix-requests.json').read_text())
+        assert report['attempts'] == 0 and report['invocation']['integration'], report
+        source_file = target / 'src/lib.rs'
+        original_source = source_file.read_bytes()
+        source_file.write_bytes(original_source + b'\ncompile_error!("production compilation failure");\n')
+        broken = snapshot(target)
+        failure = run('integration-repair-build-error', ['utgen', 'fix', *integration_args], expected=1)
+        assert 'production compilation failure' in failure.stderr
+        assert snapshot(target) == broken
+        assert (state['generation'], state['repair']) == requests_before
+        assert not list((target / 'src').rglob('*.bak'))
+        source_file.write_bytes(original_source)
+        # Request failure must restore the temporary input without touching src/.
+        saved_fixed = {}
+        for name in selected_names:
+            path = target / f'utgen/generation/llm_fix/{names[name]}.json'
+            saved_fixed[path] = path.read_bytes()
+            path.unlink()
+        state['reject_repair'] = True
+        run('integration-repair-request-error', ['utgen', 'fix', *integration_args], expected=1)
+        state['reject_repair'] = False
+        assert snapshot(target) == stable
+        assert not list((target / 'src').rglob('*.bak'))
+        for path, content in saved_fixed.items():
+            path.write_bytes(content)
+        assert not state['errors'], state
         (work / 'summary.json').write_text(json.dumps(state, indent=2) + '\n')
         print('Minimal analysis/generation/repair/coverage checks passed.', flush=True)
     finally:

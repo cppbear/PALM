@@ -44,6 +44,13 @@ impl CompilerMessage {
     pub fn has_spans(&self) -> bool {
         return self.message.has_spans();
     }
+
+    pub fn references_file(&self, work_dir: &Path, file: &Path) -> bool {
+        self.message
+            .spans
+            .iter()
+            .any(|span| work_dir.join(&span.file_name) == file)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]

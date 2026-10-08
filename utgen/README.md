@@ -185,11 +185,22 @@ utgen fix -p <target-crate-path>
 
 Repair reads the generated candidates and uses compiler diagnostics to revise those that fail compilation. It does not target runtime assertion failures. `--tasks N` defaults to 4 and limits active focal-function repair jobs through result saving. Each job processes its candidates and repair rounds sequentially.
 
-Source insertion, target cleanup, compilation/test execution, diagnostic reading, and source restoration are serialized within each command. Model requests may overlap. Cargo retains its own dependency-build parallelism. Concurrent PALM commands or experiments require separate working copies and separate target directories.
+Source insertion or temporary test-file writes, compilation/test execution, diagnostic reading, and restoration are serialized within each command. Model requests may overlap. Cargo retains its own dependency-build parallelism. Concurrent PALM commands or experiments require separate working copies and separate target directories.
 
-All workers are joined before cleanup. A task panic or infrastructure error returns a nonzero status and skips subsequent coverage statistics; candidate compilation errors remain ordinary repair outcomes. Repair restores its source backups before returning, deletes only backups created by that invocation on success, and retains them after a worker failure. Existing source backups are rejected without overwriting them. Temporary import/candidate files are restored or removed after validation, including unwinding. This is not recovery from forced process termination. Model request deadlines are described above; Cargo subprocess deadlines remain separate work.
+All workers are joined before cleanup. A task panic or infrastructure error returns a nonzero status and skips subsequent coverage statistics; candidate compilation errors remain ordinary repair outcomes. Unit-mode repair restores its source backups before returning, deletes only backups created by that invocation on success, and retains them after a worker failure. Existing source backups are rejected without overwriting them. Temporary import/candidate files are restored or removed after validation, including unwinding. This is not recovery from forced process termination. Model request deadlines are described above; Cargo subprocess deadlines remain separate work.
 
-There is no integration-mode option for repair. Candidates are inserted into source files as unit tests, and post-repair statistics use that same mode. Do not interpret `gen --integration` followed by `fix` as preserving an integration-only evaluation.
+For integration tests, pass `--integration` to both commands:
+
+```sh
+utgen gen -p <target-crate-path> --integration
+utgen fix -p <target-crate-path> --integration
+```
+
+Integration repair compiles each candidate in a temporary `tests/palm_candidate.rs` target, without inserting tests into production source. It can repair imports, module-level helpers, and the test body. Each candidate keeps its own repaired imports/helpers, so a change does not affect siblings from the same model answer. Compilation checks do not execute tests. Repair checks saved candidates again in their integration target; successful cached repairs need no model requests.
+
+The resulting tests remain under `tests/`. Both combined and per-candidate statistics use integration targets, retain the five-second timeout, and exclude test code from coverage. Temporary compiler inputs are restored or removed on normal completion and ordinary failures. Coverage still temporarily annotates source to exclude test code and restores it afterward.
+
+Candidate files record their generation mode. Generation and repair reject a different mode instead of converting candidates. Older cache files without a mode field are treated as unit-test candidates; regenerate old integration caches in a fresh working copy. Keep the same function selection and mode for generation and repair.
 
 ## Output
 

@@ -402,6 +402,26 @@ def main():
         assert measured['total'] == 2
         results('result', 1, selected)
 
+        # Integration repair shares the same task limit and serial compiler,
+        # while leaving each candidate in a separate integration target.
+        for name in selected:
+            path = pre_dir / (nmap[name] + '.json')
+            candidate = json.loads(path.read_text())
+            for chain in candidate['fn_tests']:
+                for answer in chain['answers']:
+                    for test in answer['chain_tests']:
+                        test['codes'] = [[line.replace('(1)', '("bad")') for line in body]
+                                         for body in test['codes']]
+                        test['can_compile'] = [{'Err': 'fixture integer argument'}] * len(test['codes'])
+            path.write_text(json.dumps(candidate))
+        measured = run('integration-fix-selected', command('fix', 2, '--integration', *selection_args),
+                       limit=2, integration=True)
+        assert measured['total'] == measured['peak'] == 2, measured
+        results('fixed_result', 1, selected)
+        measured = run('integration-fix-cached', command('fix', 2, '--integration', *selection_args),
+                       integration=True)
+        assert measured['total'] == 0, measured
+
         # More workers than requests: every clone shares the same hard cap.
         for mode in ['gen', 'fix']:
             reset(seed if mode == 'fix' else None)
@@ -420,7 +440,7 @@ def main():
             preserved = {}
             if oracle:
                 (root / 'tests').mkdir()
-                for name in ['use_check.rs', 'test_check.rs']:
+                for name in ['use_check.rs', 'palm_candidate.rs']:
                     path = root / 'tests' / name
                     path.write_text('// existing compiler input\n')
                     preserved[path] = path.read_bytes()
@@ -431,7 +451,7 @@ def main():
             for file in (root / 'utgen/generation/pre_fix').glob('*.json'):
                 text = file.read_text()
                 assert 'absent_crate' not in text and 'std::cmp::max' in text, file
-            for name in ['use_check.rs', 'test_check.rs']:
+            for name in ['use_check.rs', 'palm_candidate.rs']:
                 path = root / 'tests' / name
                 if path in preserved:
                     assert path.read_bytes() == preserved[path], path

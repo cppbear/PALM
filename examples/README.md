@@ -72,9 +72,10 @@ Use a fresh working copy and repeat preprocessing and analysis before choosing t
 
 ```sh
 utgen gen -p <target-crate-path> --integration --requirement --context
+utgen fix -p <target-crate-path> --integration
 ```
 
-Integration mode generates files under the target's `tests/` directory after filtering functions using the analysis visibility flag and checking compilation. `utgen fix` currently uses source-inserted unit tests for repair and post-repair statistics; it does not provide a separate integration-mode repair pipeline.
+Integration mode generates files under the target's `tests/` directory after filtering functions using the analysis visibility flag and checking compilation. Pass `--integration` to `fix` as well to repair and evaluate candidates in integration-test targets. Imports and helpers stay with each candidate, and both combined and per-candidate coverage retain integration scope. Keep the same function selection for both commands; mixing cached generation modes is rejected.
 
 ### Results
 

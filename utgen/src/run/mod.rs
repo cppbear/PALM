@@ -1,7 +1,7 @@
 static TIMEOUT_DERIVE: &str = "#[timeout(5000)]";
 mod coverage;
 mod coverage_json;
-mod integration;
+pub(crate) mod integration;
 mod llm_fix;
 mod llm_fix_type;
 mod prepare;

@@ -1,9 +1,8 @@
-use super::{gen_input_range, gen_oracle, gen_prefix, gen_test, LLM};
+use super::{LLM, gen_input_range, gen_oracle, gen_prefix, gen_test};
 use super::{inputprompts, oracleprompts, prefixprompts, testprompts};
 use crate::types::{BrData, ChainTestInfo, TestGenInfo};
 use crate::utils::{
-    RestoreOnDrop, TemporaryFile, backup_file, cargo_check, delete_backup, insert_test,
-    restore_file, use_check,
+    RestoreOnDrop, backup_file, cargo_check, delete_backup, insert_test, restore_file, use_check,
 };
 use log::info;
 use std::collections::HashSet;
@@ -456,59 +455,45 @@ pub fn check_unit(test_gen: &mut TestGenInfo, project_dir: &Path, work_dir: &Pat
 }
 
 pub fn check_integration(test_gen: &mut TestGenInfo, work_dir: &Path) {
-    let file_path = test_gen.get_file();
-    let stem = Path::new(&file_path).file_stem().unwrap().to_str().unwrap();
-    let path = work_dir.join("tests/test_check.rs");
-    let temporary = TemporaryFile::new(&path).unwrap();
-    fs::create_dir_all(&path.parent().unwrap()).unwrap();
-    fs::write(&path, "").unwrap();
-    let name = test_gen.get_name().to_string();
-    let fn_name = name.split("::").last().unwrap();
+    use crate::run::integration::{
+        CANDIDATE_TARGET, candidate_code, initial_uses, write_candidate,
+    };
+    use crate::types::IntegrationContext;
+    use crate::utils::cargo_check_test;
 
-    let mut init_use_set = test_gen
-        .get_use_path()
-        .into_iter()
-        .collect::<HashSet<String>>();
-    use_check(&mut init_use_set, work_dir);
-    let mut id = 0;
-    for chain_test in test_gen.get_tests_mut() {
-        for test_answer in chain_test.get_answers_mut() {
-            // Model tasks only collect imports. All import compilation happens
-            // here, in the single validation consumer.
-            fs::write(&path, "").unwrap();
-            let mut uses: HashSet<_> = test_answer.get_uses().iter().cloned().collect();
+    let initial = initial_uses(test_gen, work_dir);
+    for chain in test_gen.get_tests_mut() {
+        for answer in chain.get_answers_mut() {
+            let mut uses: HashSet<_> = answer.get_uses().iter().cloned().collect();
             use_check(&mut uses, work_dir);
             let mut uses: Vec<_> = uses.into_iter().collect();
             uses.sort();
-            test_answer.set_uses(uses);
-            let mut answer_use_set = init_use_set.clone();
-            answer_use_set.extend(test_answer.get_uses().clone());
-            let common = test_answer.get_common().clone();
-            for test_info in test_answer.get_tests_mut() {
-                for (num, test_code) in test_info.codes.iter().enumerate() {
-                    let sig = format!("fn test_{}_{}_{:02}()", stem, fn_name, id);
-                    let mut fn_code = vec!["#[test]".to_string()];
-                    fn_code.extend(test_info.attrs.clone());
-                    fn_code.push(sig);
-                    fn_code.extend(test_code.clone());
-                    let mut code = answer_use_set
-                        .clone()
-                        .into_iter()
-                        .collect::<Vec<String>>()
-                        .join("\n")
-                        + "\n\n";
-                    if !common.is_empty() {
-                        code += &(common.join("\n") + "\n\n");
-                    }
-                    code += &(fn_code.join("\n") + "\n");
-                    fs::write(&path, code).unwrap();
-                    // let _ = target_clean(&work_dir);
-                    let result = cargo_check(&work_dir);
-                    test_info.can_compile[num] = result;
-                    id += 1;
+            answer.set_uses(uses);
+            let context = IntegrationContext {
+                uses: initial
+                    .iter()
+                    .chain(answer.get_uses())
+                    .cloned()
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .into_iter()
+                    .collect(),
+                common: answer.get_common().clone(),
+            };
+            for test in answer.get_tests_mut() {
+                for (num, body) in test.codes.iter().enumerate() {
+                    let code = candidate_code(
+                        &context,
+                        &test.attrs,
+                        body,
+                        "palm_candidate",
+                        "test_candidate",
+                        false,
+                    );
+                    let temporary = write_candidate(work_dir, &code).unwrap();
+                    test.can_compile[num] = cargo_check_test(work_dir, CANDIDATE_TARGET);
+                    temporary.finish().unwrap();
                 }
             }
         }
     }
-    temporary.finish().unwrap();
 }

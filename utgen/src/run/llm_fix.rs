@@ -1,16 +1,15 @@
 use super::{
+    TIMEOUT_DERIVE,
+    integration,
     llm_fix_type::{ChangeLog, CompilerMessage, ErrorMessage, TestCode},
     prepare::get_test_gen_infos,
-    run::{run_test, TestType},
-    TIMEOUT_DERIVE,
+    run::{TestType, run_test},
 };
 use crate::{
     FunctionSelection,
     gene::LLM,
-    types::{InsertKind, TestGenInfo},
-    utils::{
-        RestoreOnDrop, cargo_check, create_backup, insert_test, restore_file,
-    },
+    types::{InsertKind, IntegrationContext, TestGenInfo},
+    utils::{RestoreOnDrop, cargo_check, create_backup, insert_test, restore_file},
 };
 use log::{error, info, warn};
 use rand::Rng;
@@ -18,13 +17,13 @@ use serde::Deserialize;
 use std::{
     cmp::min,
     collections::{BTreeSet, HashMap},
-    fs::{self, create_dir_all, read_to_string, File},
+    fs::{self, File, create_dir_all, read_to_string},
     i32,
     io::{self, Write},
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicUsize, Ordering},
     },
 };
 use tokio::time::Duration;
@@ -136,12 +135,10 @@ async fn compilation_fix_assistant_for_an_error(
     file_path: &Path,
     test_code: &TestCode,
     sig: String,
-    test_name: String,
     insert_kind: InsertKind,
     common: &Vec<String>,
+    integration_attrs: Option<&[String]>,
 ) -> io::Result<(Vec<ErrorMessage>, TestCode, u32, u32)> {
-    // let mut local_error_group: Vec<ErrorMessage> = Vec::new();
-    // local_error_group.push(error_message.clone());
     let mut iterative_time = 0;
     let mut min_error_set = compile_error_set.clone();
     let mut min_error_content = test_code.clone();
@@ -150,12 +147,15 @@ async fn compilation_fix_assistant_for_an_error(
 
     let current_error = error_message;
     let rust_assistant_prompt_json_str = include_str!("../../res/rustassistant_prompt.json");
-    // println!("{:#?}", rust_assistant_prompt_json_path);
     let rust_assistant_prompt = RustAssistantPrompt::from_json(&rust_assistant_prompt_json_str);
-    let preamble_prompt = rust_assistant_prompt
-        .rustassistant_preamble
-        .replace("{cmd}", "cargo test --tests")
-        + "\n";
+    let preamble_prompt = rust_assistant_prompt.rustassistant_preamble.replace(
+        "{cmd}",
+        if integration_attrs.is_some() {
+            "cargo test --test palm_candidate --no-run"
+        } else {
+            "cargo test --tests"
+        },
+    ) + "\n";
     let error_snippet_prompt = current_error.code_snippets.clone();
     let final_prompt = preamble_prompt.clone()
         + &error_snippet_prompt.join("\n")
@@ -166,9 +166,6 @@ async fn compilation_fix_assistant_for_an_error(
             .replace("{end}", (test_code.end - 1).to_string().as_str())
         + &rust_assistant_prompt
             .rustassistant_instructions_and_examples_for_formatting_the_changelog_output;
-    // let fix_prompt_path = work_path.join("fix_prompt.txt");
-    // let mut file = File::create(fix_prompt_path).unwrap();
-    // file.write_all(final_prompt.as_bytes()).unwrap();
 
     let lock = FIX_LOCK.get_or_init(|| async { Mutex::new(()) }).await;
     let mut completion_tokens = 0;
@@ -180,22 +177,8 @@ async fn compilation_fix_assistant_for_an_error(
             llm.get_answer(&final_prompt, 1, false).await?;
         completion_tokens += usage_completion;
         prompt_tokens += usage_prompt;
-        // for request_choice in request_choices.iter_mut() {
-        //     *request_choice = "ChangeLog:".to_string() + request_choice;
-        // }
-        // let mut request_result: Vec<(Vec<ErrorMessage>, TestCode)> = Vec::new();
-        let mut request_choices_string = String::new();
-        // for request in request_choices.iter() {
-        //     request_choices_string = request_choices_string + request + "\n";
-        // }
-        request_choices_string = request_choices.join("\n");
-        // let fix_request_path = work_path.join("fix_request.txt");
-        // let mut file = File::create(fix_request_path).unwrap();
-        // file.write_all(request_choices_string.as_bytes()).unwrap();
-        // println!("{:#?}", request_choices);
-        // let mut modified_file_right = true;
+        let request_choices_string = request_choices.join("\n");
 
-        // for i in request_choices.iter() {
         let mut new_test_code = test_code.clone();
         let mut changelog_list = llm_return_content_parser(work_path, &request_choices_string);
         let changelog_list_copy = changelog_list.clone();
@@ -215,82 +198,80 @@ async fn compilation_fix_assistant_for_an_error(
             continue;
         }
 
-        let template = include_str!("../../res/code_template.json");
-        let code_template: Vec<String> = serde_json::from_str(&template).unwrap();
-        let mut fn_code = vec![
-            "#[test]".to_string(),
-            TIMEOUT_DERIVE.to_string(),
-            sig.clone(),
-        ];
-        fn_code.extend(new_test_code.codes.clone());
-        let insert_code = if !common.is_empty() {
-            let mut code = common.clone();
-            code.push("".to_string());
-            code.extend(fn_code);
-            code
+        let compile_error_set;
+        if let Some(attrs) = integration_attrs {
+            if integration::repaired_candidate(&new_test_code.codes, attrs).is_none() {
+                continue;
+            }
+            let _guard = lock.lock().await;
+            let (updated, errors, _) =
+                check_integration_candidate(work_path, &new_test_code.codes)?;
+            new_test_code = updated;
+            compile_error_set = errors;
         } else {
-            fn_code
-        };
-        let mut mod_code = code_template.clone();
-        let pos = mod_code.len() - 1;
-        mod_code.splice(pos..pos, insert_code);
+            let template = include_str!("../../res/code_template.json");
+            let code_template: Vec<String> = serde_json::from_str(&template).unwrap();
+            let mut fn_code = vec![
+                "#[test]".to_string(),
+                TIMEOUT_DERIVE.to_string(),
+                sig.clone(),
+            ];
+            fn_code.extend(new_test_code.codes.clone());
+            let insert_code = if !common.is_empty() {
+                let mut code = common.clone();
+                code.push("".to_string());
+                code.extend(fn_code);
+                code
+            } else {
+                fn_code
+            };
+            let mut mod_code = code_template.clone();
+            let pos = mod_code.len() - 1;
+            mod_code.splice(pos..pos, insert_code);
 
-        let guard = lock.lock().await;
-        restore_file(file_path);
-        let restore = RestoreOnDrop(file_path);
-        insert_test(insert_kind, Path::new(&file_path), &mod_code);
-        // let _ = target_clean(&work_path);
+            let guard = lock.lock().await;
+            restore_file(file_path);
+            let restore = RestoreOnDrop(file_path);
+            insert_test(insert_kind, Path::new(&file_path), &mod_code);
+            // let _ = target_clean(&work_path);
 
-        let test_type = TestType::Error;
-        run_test(project_path, work_path, test_type, false, false);
+            let test_type = TestType::Error;
+            run_test(project_path, work_path, test_type, false, false);
 
-        let compiler_message_set = compiler_error_parser_from_json(work_path);
+            let compiler_message_set = compiler_error_parser_from_json(work_path);
 
-        let mut compile_error_set: Vec<ErrorMessage> = Vec::new();
-        for compiler_message in compiler_message_set.iter() {
-            let compile_error = ErrorMessage::new(work_path, compiler_message);
-            compile_error_set.push(compile_error);
+            let mut errors: Vec<ErrorMessage> = Vec::new();
+            for compiler_message in compiler_message_set.iter() {
+                let compile_error = ErrorMessage::new(work_path, compiler_message);
+                errors.push(compile_error);
+            }
+
+            new_test_code = TestCode::new(&file_path, &new_test_code.codes);
+            restore_file(Path::new(&file_path));
+            drop(restore);
+            drop(guard);
+            compile_error_set = errors;
         }
-
-        // request_result.push((compile_error_set, new_test_code));
-        // }
-        // if request_result.len() != 0 {
-        new_test_code = TestCode::new(&file_path, &new_test_code.codes);
-        restore_file(Path::new(&file_path));
-        drop(restore);
-        drop(guard);
-        // let mut min_set_index = MAX;
-        // let mut i = 0;
-        // for request_r in request_result.iter() {
-        // if request_r.0.len() < min_set_num {
-        //     min_set_num = request_r.0.len();
-        //     min_set_index = i;
-        // }
-        // i += 1;
-        // }
         if compile_error_set.len() < min_set_num {
             min_error_set = compile_error_set;
             min_error_content = new_test_code;
             min_set_num = min_error_set.len();
         }
-        // min_error_set = request_result[min_set_index].0.clone();
-        // min_error_content = request_result[min_set_index].1.clone();
         if min_set_num == 0 {
-            return Ok((min_error_set, min_error_content, completion_tokens, prompt_tokens));
+            return Ok((
+                min_error_set,
+                min_error_content,
+                completion_tokens,
+                prompt_tokens,
+            ));
         }
-
-        // let template = include_str!("../../res/code_template.json");
-        // let code_template: Vec<String> = serde_json::from_str(&template).unwrap();
-        // let mut fn_code = vec!["#[test]".to_string(), sig.clone()];
-        // fn_code.extend(min_error_content.codes.clone());
-        // let mut mod_code = code_template.clone();
-        // let pos = mod_code.len() - 1;
-        // mod_code.splice(pos..pos, fn_code);
-        // restore_file(Path::new(&file_path));
-        // insert_test(insert_kind, Path::new(&file_path), &mod_code);
-        // }
     }
-    return Ok((min_error_set, min_error_content, completion_tokens, prompt_tokens));
+    return Ok((
+        min_error_set,
+        min_error_content,
+        completion_tokens,
+        prompt_tokens,
+    ));
 }
 
 async fn compilation_fix_assistant_for_one_fn(
@@ -347,7 +328,6 @@ async fn compilation_fix_assistant_for_one_fn(
                         // let _ = target_clean(&work_path);
 
                         let test_type = TestType::Error;
-                        let test_name = format!("test_{}", fn_name);
                         run_test(&project_dir, &work_path, test_type, false, false);
 
                         // restore_file(&file_path);
@@ -379,8 +359,8 @@ async fn compilation_fix_assistant_for_one_fn(
                             let (new_error_set, new_error_content, usage_completion, usage_prompt) =
                                 compilation_fix_assistant_for_an_error(
                                     llm, random_error, &compile_error_set, &project_dir, &work_path,
-                                    &file_path, &test_file_content, sig.clone(), test_name.clone(),
-                                    insert_kind, &common,
+                                    &file_path, &test_file_content, sig.clone(),
+                                    insert_kind, &common, None,
                                 ).await.map_err(|error| io::Error::other(format!(
                                     "Repair model request failed for {name}: {error}"
                                 )))?;
@@ -442,6 +422,147 @@ async fn compilation_fix_assistant_for_one_fn(
     Ok(test_gen_info)
 }
 
+fn check_integration_candidate(
+    work_dir: &Path,
+    code: &[String],
+) -> io::Result<(TestCode, Vec<ErrorMessage>, Result<(), String>)> {
+    let temporary = integration::write_candidate(work_dir, code)?;
+    let output = integration::compile_candidate(work_dir)?;
+    let mut errors = Vec::new();
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if value["reason"] == "compiler-message" && value["message"]["level"] == "error" {
+            let message: CompilerMessage =
+                serde_json::from_value(value).map_err(io::Error::other)?;
+            if message.references_file(work_dir, &integration::candidate_path(work_dir)) {
+                errors.push(ErrorMessage::new(work_dir, &message));
+            }
+        }
+    }
+    let status = if output.status.success() {
+        Ok(())
+    } else {
+        let details = format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        if errors.is_empty() {
+            return Err(io::Error::other(format!(
+                "Integration compilation failed: {details}"
+            )));
+        }
+        Err(details)
+    };
+    let test_code = TestCode::new(&integration::candidate_path(work_dir), &code.to_vec());
+    temporary.finish()?;
+    Ok((test_code, errors, status))
+}
+
+async fn fix_integration_function(
+    llm: &LLM,
+    project_dir: &Path,
+    work_dir: &Path,
+    mut test_gen: TestGenInfo,
+) -> io::Result<TestGenInfo> {
+    let lock = FIX_LOCK.get_or_init(|| async { Mutex::new(()) }).await;
+    let initial = {
+        let _guard = lock.lock().await;
+        integration::initial_uses(&test_gen, work_dir)
+    };
+    let start = Instant::now();
+    for chain in test_gen.get_tests_mut() {
+        for answer in chain.get_answers_mut() {
+            let context = IntegrationContext {
+                uses: initial
+                    .iter()
+                    .chain(answer.get_uses())
+                    .cloned()
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .collect(),
+                common: answer.get_common().clone(),
+            };
+            let mut completion = answer.get_completion_tokens();
+            let mut prompt = answer.get_prompt_tokens();
+            for test in answer.get_tests_mut() {
+                if test.integration_contexts.is_empty() {
+                    test.integration_contexts = vec![context.clone(); test.codes.len()];
+                }
+                for num in 0..test.codes.len() {
+                    let code = integration::candidate_code(
+                        &test.integration_contexts[num],
+                        &test.attrs,
+                        &test.codes[num],
+                        "palm_candidate",
+                        "test_candidate",
+                        false,
+                    );
+                    // Revalidate in the actual target, including cached successful candidates.
+                    let (mut current, mut errors, status) = {
+                        let _guard = lock.lock().await;
+                        check_integration_candidate(work_dir, &code)?
+                    };
+                    test.can_compile[num] = status;
+                    if test.can_compile[num].is_ok() || test.repaired[num] {
+                        continue;
+                    }
+                    let rounds = min(errors.len() + 2, 10);
+                    for _ in 0..rounds {
+                        if errors.is_empty() {
+                            break;
+                        }
+                        let error = &errors[0];
+                        let (next_errors, next_code, used_completion, used_prompt) =
+                            compilation_fix_assistant_for_an_error(
+                                llm,
+                                error,
+                                &errors,
+                                project_dir,
+                                work_dir,
+                                &integration::candidate_path(work_dir),
+                                &current,
+                                "fn test_candidate()".to_string(),
+                                InsertKind::EOF,
+                                &Vec::new(),
+                                Some(&test.attrs),
+                            )
+                            .await?;
+                        errors = next_errors;
+                        current = next_code;
+                        completion += used_completion;
+                        prompt += used_prompt;
+                    }
+                    let (context, body) =
+                        integration::repaired_candidate(&current.codes, &test.attrs).ok_or_else(
+                            || io::Error::other("Integration repair changed the test declaration"),
+                        )?;
+                    test.integration_contexts[num] = context;
+                    test.codes[num] = body;
+                    test.repaired[num] = true;
+                    test.can_compile[num] = if errors.is_empty() {
+                        Ok(())
+                    } else {
+                        Err(errors
+                            .iter()
+                            .flat_map(|error| error.code_snippets.clone())
+                            .collect::<Vec<_>>()
+                            .join("\n"))
+                    };
+                    if start.elapsed() >= Duration::from_secs(FIX_TIMEOUT) {
+                        return Ok(test_gen);
+                    }
+                }
+            }
+            answer.set_completion_tokens(completion);
+            answer.set_prompt_tokens(prompt);
+        }
+    }
+    Ok(test_gen)
+}
+
 fn merge_common_in_code(test_gen_infos: &mut Vec<TestGenInfo>) {
     for test_gen_info in test_gen_infos.iter_mut() {
         for fn_test in test_gen_info.get_tests_mut() {
@@ -466,6 +587,7 @@ pub async fn llm_fix(
     work_path: PathBuf,
     functions: &FunctionSelection,
     tasks: usize,
+    integration: bool,
 ) -> io::Result<()> {
     if tasks == 0 || tasks > Semaphore::MAX_PERMITS {
         return Err(io::Error::other(
@@ -478,11 +600,18 @@ pub async fn llm_fix(
         serde_json::from_str(&fs::read_to_string(&map_path).unwrap()).unwrap();
 
     // Prefer saved repair progress, then add candidates not yet copied from generation.
+    let generated = get_test_gen_infos(&project_path, true);
+    for info in generated
+        .iter()
+        .filter(|info| functions.contains(info.get_name()))
+    {
+        info.check_mode(integration)?;
+    }
     let mut test_gen_infos = get_test_gen_infos(&project_path, false);
     let saved: BTreeSet<_> = test_gen_infos.iter()
         .map(|info| info.get_name().to_owned()).collect();
     test_gen_infos.extend(
-        get_test_gen_infos(&project_path, true).into_iter()
+        generated.into_iter()
             .filter(|info| !saved.contains(info.get_name())),
     );
     test_gen_infos.retain(|info| {
@@ -503,7 +632,12 @@ pub async fn llm_fix(
             }
         }
     }
-    merge_common_in_code(&mut test_gen_infos);
+    for info in &test_gen_infos {
+        info.check_mode(integration)?;
+    }
+    if !integration {
+        merge_common_in_code(&mut test_gen_infos);
+    }
     create_dir_all(&parent_dir)?;
     for info in &test_gen_infos {
         let json_path = parent_dir.join(nmap.get(info.get_name()).unwrap().to_owned() + ".json");
@@ -516,7 +650,7 @@ pub async fn llm_fix(
         .map(|info| project_path.join(info.get_file()))
         .collect();
     let mut backups = Vec::new();
-    for source in sources {
+    for source in sources.into_iter().filter(|_| !integration) {
         match create_backup(&source) {
             Ok(backup) => backups.push((source, backup)),
             Err(error) => {
@@ -545,13 +679,13 @@ pub async fn llm_fix(
         let llm = llm.clone();
         handles.push(tokio::spawn(async move {
             let _permit = slots.acquire_owned().await.map_err(io::Error::other)?;
-            let test_gen_info = compilation_fix_assistant_for_one_fn(
-                &llm,
-                project_path_clone,
-                work_path,
-                test_gen_info,
-            )
-            .await?;
+            let test_gen_info = if integration {
+                fix_integration_function(&llm, &project_path_clone, &work_path, test_gen_info).await?
+            } else {
+                compilation_fix_assistant_for_one_fn(
+                    &llm, project_path_clone, work_path, test_gen_info,
+                ).await?
+            };
             let json_path = parent_dir_clone.join(encoded_name + ".json");
             test_gen_info.dump_json(&json_path);
             let completed = counter_clone.fetch_add(1, Ordering::Relaxed) + 1;

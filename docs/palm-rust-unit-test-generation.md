@@ -262,7 +262,7 @@ Rust 的一个核心挑战是 MIR 的去糖。比如高级语法 `match color` �
 utgen pre-process --project-dir <PROJECT_DIR> [--work-dir <WORK_DIR>...]
 utgen analyze --project-dir <STANDALONE_CRATE_DIR>
 utgen gen --project-dir <PROJECT_DIR> [--work-dir <WORK_DIR>...] [--tasks <N>] [--integration] [--requirement] [--context] [--oracle]
-utgen fix --project-dir <PROJECT_DIR> [--work-dir <WORK_DIR>...] [--tasks <N>]
+utgen fix --project-dir <PROJECT_DIR> [--work-dir <WORK_DIR>...] [--tasks <N>] [--integration]
 ```
 
 `analyze` 现在执行 `cargo clean`、`cargo brinfo` 和 `focxt`，随后核对分析索引及上下文文件。当前支持用 `-p` 指定单个独立 crate；目录中已有 `brinfo/` 或 `focxt/` 时会拒绝执行，应使用新的工作副本，避免混入旧分析结果。
@@ -358,7 +358,7 @@ export PALM_CONFIG="$(pwd)/utgen/res/api.json"
   - `gen_full_tests` 使用 `test_prompt.json` 一次性生成测试。
   - `gen_tests_cot` 使用 `input -> prefix -> oracle` 三步流程。
   - `check_unit` 会临时把测试插入被测源码文件，运行 `cargo build --tests`，记录每个候选是否可编译，然后恢复文件。
-  - `check_integration` 会写入 `tests/test_check.rs` 做编译检查。
+  - `check_integration` 会写入临时 `tests/palm_candidate.rs`，只编译该集成测试目标。
 
 - `utgen/src/gene/cot/*.rs`
   - `input_infer.rs`：生成输入范围。
@@ -620,7 +620,9 @@ utgen fix -p <target-crate-path>
 
 修复阶段读取 `utgen/generation/pre_fix`，针对不可编译测试调用 LLM 生成 ChangeLog 并重新验证。修复结果写入 `utgen/generation/llm_fix`，覆盖率统计写入 `utgen/fixed_result`。
 
-`fix` 当前将测试插入源码，以单元测试方式修复和统计，没有独立的 integration 修复选项。因此 `gen --integration` 后接 `fix` 并不表示全过程保留集成测试模式。运行时断言失败也不属于当前编译修复流程的目标。
+`fix` 默认将测试插入源码，以单元测试方式修复和统计。集成测试需要在生成和修复时都传入 `--integration`：修复阶段把单个候选写入临时集成测试目标，只编译该目标；可以修改导入、模块级辅助代码和测试体，并单独保存各候选的导入与辅助代码。整体执行和逐候选覆盖率统计都保持集成测试模式，不再把候选插入源码。覆盖率阶段仍会临时添加排除测试代码的属性并恢复源文件。
+
+候选缓存记录生成模式，模式不匹配时会报错；没有模式字段的旧缓存按单元测试处理，旧集成测试缓存应在新的工作副本中重新生成。两条命令还应传入相同的函数清单。运行时断言失败不属于编译修复流程的目标。
 
 ### 10.7 示例：`examples/bytes`
 
@@ -709,7 +711,7 @@ integration 模式先按 `brinfo` 的 `visible` 标志筛选函数，并且 `utg
 
 - `utgen pre-process`：重命名所选 crate 的 `tests`，将测试源码区间替换为空白。
 - `utgen gen`：可能追加 `ntest` 依赖，写入临时测试文件或插入测试做编译检查。
-- `utgen fix`：临时插入测试并恢复，结束时删除备份。
+- `utgen fix`：默认临时插入单元测试并恢复，成功时删除本轮备份；`--integration` 使用临时集成测试文件，恢复或删除本轮临时输入。
 
 建议用 git 查看差异：
 

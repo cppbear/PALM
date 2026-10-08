@@ -5,8 +5,17 @@ use std::path::Path;
 use std::process::Command;
 
 pub fn cargo_check(work_dir: &Path) -> Result<(), String> {
+    cargo_build(work_dir, &["--tests"])
+}
+
+pub(crate) fn cargo_check_test(work_dir: &Path, target: &str) -> Result<(), String> {
+    cargo_build(work_dir, &["--test", target])
+}
+
+fn cargo_build(work_dir: &Path, targets: &[&str]) -> Result<(), String> {
     let output = Command::new("cargo")
-        .args(["build", "--tests"])
+        .arg("build")
+        .args(targets)
         .current_dir(work_dir)
         .output()
         .expect("failed to execute process");
@@ -30,7 +39,7 @@ pub fn use_check(use_set: &mut HashSet<String>, work_dir: &Path) {
     use_set.retain(|x| {
         let code = format!("{}\n", x);
         fs::write(&path, code).unwrap();
-        cargo_check(&work_dir).is_ok()
+        cargo_check_test(work_dir, "use_check").is_ok()
     });
     temporary.finish().unwrap();
 }
