@@ -36,6 +36,8 @@ The regression script runs in Linux CI after the ordinary workspace tests. It us
 
 Generation, repair, and statistics no longer call the partial `target_clean` helper between candidates. Cargo reuses build artifacts as sources are replaced and restored; analysis still clears the check cache, and coverage retains its own profile cleanup. The task regression preserves the target directory across scenarios and checks compilation failures followed by successful repairs.
 
+Cached-candidate checks exercise the shared five-second test timeout in unit and integration statistics without additional model requests. Ordinary and `should_panic` infinite loops must count as failures, while an expected panic and a later normal test pass. Both production branches must remain covered and temporary source edits must be restored. The regression harness terminates its subprocess group if a check hangs; this external deadline is separate from the candidate timeout.
+
 ## Coverage Interpretation
 
 `original/original-coverage.json` and `.xml` measure production code exercised by all original unit and integration tests through `utgen coverage`. Test bodies and helpers contribute to neither the coverage numerator nor denominator. The check requires both original `classify` branches to have executed. LLVM can emit separate records for the same branch location in different test binaries; the check unions those outcomes instead of requiring both in one record.

@@ -5,7 +5,7 @@ use super::{
 };
 use crate::{
     FunctionSelection,
-    run::TIMEOUT_DERIVE,
+    run::timed_test,
     types::TestGenInfo,
     utils::{backup_file, delete_backup, insert_test, restore_file},
     run::run_all::{prepare_all_unit_tests_for_one_shot_run},
@@ -801,17 +801,7 @@ fn gen_coverage_and_pass_rate(
                             mod_code.splice(pos..pos, common);
                             let sig = format!("fn test_{}_{:02}()", fn_name, num);
                             info!("Running test fn test_{}_{:02}()", fn_name, tests);
-                            let mut fn_code =
-                                vec!["#[test]".to_string()];
-                            fn_code.extend(test.attrs.clone().iter().map(|attr| {
-                                if attr.contains("#[should_panic(") {
-                                    return "#[should_panic]".to_string();
-                                } else {
-                                    attr.clone()
-                                }
-                            }));
-                            fn_code.push(sig);
-                            fn_code.extend(test_code.clone());
+                            let fn_code = timed_test(&sig, &test.attrs, test_code);
                             let pos = mod_code.len() - 1;
                             mod_code.splice(pos..pos, fn_code);
                             insert_test(insert_kind, Path::new(&file_path), &mod_code);
@@ -1178,17 +1168,7 @@ fn gen_codes_lines_and_branches_covered(
                                 mod_code.splice(pos..pos, common);
                                 let sig = format!("fn test_{}_{:02}()", fn_name, num);
                                 info!("Running test fn test_{}_{:02}()", fn_name, num);
-                                let mut fn_code =
-                                    vec!["#[test]".to_string()];
-                                fn_code.extend(test.attrs.clone().iter().map(|attr| {
-                                    if attr.contains("#[should_panic(") {
-                                        return "#[should_panic]".to_string();
-                                    } else {
-                                        attr.clone()
-                                    }
-                                }));
-                                fn_code.push(sig);
-                                fn_code.extend(test_code.clone());
+                                let fn_code = timed_test(&sig, &test.attrs, test_code);
                                 let pos = mod_code.len() - 1;
                                 mod_code.splice(pos..pos, fn_code);
                                 insert_test(insert_kind, Path::new(&file_path), &mod_code);

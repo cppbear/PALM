@@ -3,7 +3,7 @@ use std::{collections::HashSet, fs, path::Path};
 use log::info;
 
 use crate::{
-    run::TIMEOUT_DERIVE,
+    run::timed_test,
     types::TestGenInfo,
     utils::{cargo_check, use_check},
 };
@@ -103,17 +103,7 @@ pub fn gen_integration(
                                 tests_compiled += 1;
                                 has_oracle_compiled = true;
                                 let sig = format!("fn test_{}_{}_{:02}()", stem, rename, id);
-                                let mut fn_code =
-                                    vec!["#[test]".to_string(), TIMEOUT_DERIVE.to_string()];
-                                fn_code.extend(test.attrs.clone().iter().map(|attr| {
-                                    if attr.contains("#[should_panic(") {
-                                        return "#[should_panic]".to_string();
-                                    } else {
-                                        attr.clone()
-                                    }
-                                }));
-                                fn_code.push(sig);
-                                fn_code.extend(test_code.clone());
+                                let fn_code = timed_test(&sig, &test.attrs, test_code);
                                 mod_content = mod_content + &fn_code.join("\n") + "\n\n";
                                 integration_info
                                     .test_function_names
