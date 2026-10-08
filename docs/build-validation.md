@@ -47,8 +47,12 @@ Model configuration is loaded only when generation or repair starts. See the [ru
 
 ## CI and Further Checks
 
-The [CI workflow](../.github/workflows/ci.yml) checks builds, ordinary tests, CLI entry points, installer syntax/help, and example metadata on Linux. It also runs the [minimal pipeline and related regressions](minimal-pipeline.md) and [Bytes analysis checks](bytes-analysis.md). Actual tool installation and Docker image validation are separate checks.
+The [native CI workflow](../.github/workflows/ci.yml) checks builds, ordinary tests, CLI entry points, installer syntax/help, and example metadata on Linux. It also runs the [minimal pipeline and related regressions](minimal-pipeline.md) and [Bytes analysis checks](bytes-analysis.md).
 
 Changes limited to READMEs and the documentation paths selected in the workflow receive a patch whitespace check. Other changes and manual workflow runs execute the full offline suite. A documentation-only CI result does not imply that Rust tests ran.
+
+The independent [Docker checks workflow](../.github/workflows/docker.yml) builds a Linux AMD64 image, checks its Python, compiler, and coverage tools, installs all four PALM tool packages, and checks their command entry points. It runs for changes to Docker files, toolchain files, Cargo manifests/lockfiles, build scripts, build-utils, root Cargo configuration, the installer, or its own workflow. Ordinary Rust logic and documentation changes do not trigger it. The image uses BuildKit's GitHub Actions layer cache and is loaded only into the runner's local Docker engine.
+
+To run the minimal offline pipeline in the container as well, select **Docker checks → Run workflow** in GitHub Actions and enable `full_pipeline`. This uses the installed tool binaries and fixed local responses. Docker checks run independently of native CI, have a 30-minute job limit, and cancel superseded runs for the same PR or branch.
 
 The offline checks use temporary target copies and local model responses. They cover the scenarios documented in each guide; they do not measure model quality, provide general crash recovery, or establish support for arbitrary Rust projects.
