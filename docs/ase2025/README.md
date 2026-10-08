@@ -5,4 +5,4 @@ These are the original presentation materials for **PALM: Synergizing Program An
 - [Poster](research-2647-poster.pdf): one A0 page.
 - [Presentation](research-2647-pre.pdf): 33 pages.
 
-Both PDFs are preserved byte for byte from [`cppbear/ase2025`, commit `d24c7d5`](https://github.com/cppbear/ase2025/tree/d24c7d5cda1604894d3b2cecfaddeecd3ef46b73). For installation and commands for the current code, see the [project README](../../README.md) and [technical guide](../palm-rust-unit-test-generation.md).
+For installation and commands for the current code, see the [project README](../../README.md) and [technical guide](../palm-rust-unit-test-generation.md).

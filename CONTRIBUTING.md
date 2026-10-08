@@ -37,4 +37,4 @@ Run PALM on a working copy of a target crate: preprocessing changes its source a
 
 Keep the change focused and explain the problem, resulting behavior, and checks you ran. Add a regression case for a reproduced behavior change when the existing checks do not cover it. Real-model calls are not required for ordinary fixes; use local fixtures or existing saved candidates where practical.
 
-Keep credentials, target build directories, generated answers, coverage reports, and local trial logs out of commits. Preserve the pinned toolchain and dependency lockfile unless changing them is part of the task. Record the origin of imported code or material in [source integration notes](docs/source-integration.md), and retain its applicable notices.
+Keep credentials, target build directories, generated answers, coverage reports, and local trial logs out of commits. Preserve the pinned toolchain and dependency lockfile unless changing them is part of the task.
