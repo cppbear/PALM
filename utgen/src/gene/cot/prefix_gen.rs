@@ -1,7 +1,6 @@
 use super::{LLM, Prompt, extract_test_functions};
 use crate::types::{ChainTestAnswer, TestInfo};
 use log::error;
-use rand::Rng;
 use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
@@ -28,11 +27,7 @@ pub async fn gen_prefix(
 
     for attempt in 1..=3 {
         if attempt > 1 {
-            let random_secs = {
-                let mut rng = rand::rng();
-                rng.random_range(10..=30)
-            };
-            sleep(Duration::from_secs(random_secs)).await;
+            sleep(Duration::from_secs(1)).await;
         }
         let (answers, usage_completion, usage_prompt) =
             match llm.fetch_answer(Some(system_pt), &user_pt, 1, false).await {
