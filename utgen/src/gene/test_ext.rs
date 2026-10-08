@@ -180,15 +180,9 @@ fn is_test_mod_attr(attr: &Attribute) -> bool {
     flag
 }
 
-pub fn try_parse(source: &str) -> Result<(), ()> {
-    match syn::parse_str::<syn::File>(source) {
-        Ok(_) => Ok(()),
-        Err(_) => Err(()),
-    }
-}
-
-pub fn extract_test_functions(source: &str) -> TestExtract {
-    let syntax_tree: syn::File = syn::parse_str(source).expect("Failed to parse source");
+pub fn extract_test_functions(source: &str) -> Result<TestExtract, String> {
+    let syntax_tree: syn::File =
+        syn::parse_str(source).map_err(|error| format!("Invalid Rust answer: {error}"))?;
     let mut visitor = TestFnVisitor {
         uses: Vec::new(),
         has_test_mod: false,
@@ -196,16 +190,19 @@ pub fn extract_test_functions(source: &str) -> TestExtract {
         specs: Vec::new(),
     };
     visitor.visit_file(&syntax_tree);
+    if visitor.test_fns.is_empty() {
+        return Err("No #[test] function found in model answer".to_string());
+    }
     let mut lines = source.lines().map(|s| s.to_string()).collect::<Vec<_>>();
     remove_lines_and_ranges(&mut lines, visitor.specs);
 
     trim_empty_lines(&mut lines);
-    TestExtract {
+    Ok(TestExtract {
         uses: visitor.uses,
         has_test_mod: visitor.has_test_mod,
         common: lines,
         test_fns: visitor.test_fns,
-    }
+    })
 }
 
 #[cfg(test)]
@@ -236,7 +233,7 @@ mod test {
                 assert_eq!(2, 4);
             }
         "#;
-        let extract = extract_test_functions(source);
+        let extract = extract_test_functions(source).unwrap();
         assert_eq!(extract.has_test_mod, false);
         println!("uses: {:?}", extract.uses);
         println!("common: {:?}", extract.common);
@@ -276,7 +273,7 @@ mod test {
                 }
             }
         "#;
-        let extract = extract_test_functions(source);
+        let extract = extract_test_functions(source).unwrap();
         assert_eq!(extract.has_test_mod, true);
         println!("uses: {:?}", extract.uses);
         println!("common: {:?}", extract.common);
@@ -285,5 +282,34 @@ mod test {
         println!("attrs: {:?}", extract.test_fns[0].0);
         println!("attrs: {:?}", extract.test_fns[1].0);
         // assert_eq!(uses.len(), 4);
+    }
+
+    #[test]
+    fn rejects_valid_rust_without_test_functions() {
+        for source in [
+            "fn helper() {}",
+            "use std::cmp::max;",
+            "// No test generated",
+            "#[cfg(test)] mod tests {}",
+        ] {
+            let error = extract_test_functions(source).err().unwrap();
+            assert!(error.contains("No #[test] function"), "{source}: {error}");
+        }
+    }
+
+    #[test]
+    fn invalid_rust_is_a_parse_error() {
+        let error = extract_test_functions("#[test] fn broken( {")
+            .err()
+            .unwrap();
+        assert!(error.starts_with("Invalid Rust answer:"), "{error}");
+    }
+
+    #[test]
+    fn a_test_prefix_does_not_need_an_assertion() {
+        let extract =
+            extract_test_functions("#[test]\nfn prefix() { let actual = target(); }").unwrap();
+        assert_eq!(extract.test_fns.len(), 1);
+        assert!(extract.test_fns[0].1.join("\n").contains("target()"));
     }
 }

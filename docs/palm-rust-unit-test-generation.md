@@ -369,7 +369,9 @@ export PALM_CONFIG="$(pwd)/utgen/res/api.json"
 - `utgen/src/gene/test_ext.rs`
   - 用 `syn` 解析 LLM 返回代码。
   - 提取 `use` 语句、`#[test]` 函数、测试模块、公共辅助代码。
-  - 要求 LLM 返回可被 `syn::File` 解析的 Rust 代码。
+  - 要求 LLM 返回可被 `syn::File` 解析且至少包含一个当前支持的 `#[test]` 函数的 Rust 代码；语法错误与未提取到测试均返回明确原因。
+
+完整测试和 prefix 生成共用这次解析与提取，失败时沿用最多 3 次的格式尝试，耗尽后报告生成失败并跳过后续统计。这里只判断是否存在测试候选；prefix 阶段允许没有断言，候选能否编译和通过由后续执行判断。每次收到的原始回答先保存在 `utgen/generation/answer/<encoded>/<chain>/test-attempt-N.txt` 或 `prefix-attempt-N.txt`，再移除代码围栏并解析；成功代码仍保存为 `code.rs` 或 `prefix.rs`。尝试文件路径会在后续命令中复用，不构成多轮实验历史；旧候选缓存也不会自动迁移，验收使用新的工作副本。
 
 - `utgen/src/utils/insert.rs`
   - 根据 `InsertKind` 把测试插入文件末尾或模块末尾。

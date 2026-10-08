@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use std::{fs, io};
-use test_ext::{extract_test_functions, try_parse};
+use test_ext::extract_test_functions;
 use tokio::sync::{Semaphore, mpsc};
 
 pub use llm::LLM;
