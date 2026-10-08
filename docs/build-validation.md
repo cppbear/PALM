@@ -1,63 +1,54 @@
-# Build and Runtime Configuration Validation
+# Build and Installation Checks
 
-Validation date: 2026-10-07.
+Use these checks to verify PALM's build, command entry points, and runtime configuration. Follow the [project prerequisites](../README.md#prerequisites) first. Commands below start in the repository root and use the pinned toolchain and `Cargo.lock`.
 
-This maintenance batch establishes a build and test baseline after the repository integration. It does not validate the full program-analysis, generated-test execution, and coverage pipeline.
+## Build and Test
 
-## Baseline
+```sh
+cargo build --workspace --locked
+cargo test --workspace --locked
+```
 
-The baseline is commit `51a644d9e8c0b26c352726b725f9e847d161f5fc`, exported to a separate temporary directory before editing. The pinned toolchain was installed with `rust-src`, `rustc-dev`, and `llvm-tools-preview`.
+Neither command needs an `api.json` file or model credentials. Ordinary tests use local HTTP fixtures to check configuration selection, CLI validation, request handling, retries, and budgets. The real-service test is ignored by default; see [utgen testing](../utgen/README.md#testing) for its explicit opt-in command.
 
-| Item | Value |
-| --- | --- |
-| Local platform | macOS, Apple Silicon (`aarch64-apple-darwin`) |
-| Compiler | `rustc 1.87.0-nightly (75530e9f7 2025-03-18)` |
-| Toolchain | `nightly-2025-03-19` |
-| Dependency resolution | Existing `Cargo.lock`, with `--locked` |
+Dependency downloads can require network access. Passing these checks confirms the tested build and request behavior, not compatibility with a particular model service.
 
-| Baseline check | Result |
-| --- | --- |
-| `cargo build --workspace --locked`, without `utgen/res/api.json` | Failed with exit 101: `include_str!` could not read `api.json`. |
-| Same build, with a non-secret placeholder configuration in the temporary copy | Passed. No request was made to the placeholder endpoint. |
-| `cargo test --workspace --locked -- --skip gene::llm::tests::test_llm` | Passed: two ordinary tests; the existing real-model test was explicitly filtered out. |
+## Command Entry Points
 
-The build emits existing compiler warnings. The baseline confirms that the missing configuration file was a build dependency; it does not establish that the runtime pipeline is correct.
+After the workspace build:
 
-## Runtime Configuration
+```sh
+bash -n install.sh docker/docker-build docker/docker-run
+./install.sh --help
+./target/debug/cargo-brinfo --help
+./target/debug/cargo-call-chain --help
+./target/debug/focxt --help
+./target/debug/utgen --help
+cargo metadata --manifest-path examples/bytes/Cargo.toml --no-deps --format-version 1
+```
 
-`utgen gen` and `utgen fix` now load configuration once at command startup and pass it into generation and repair tasks. The file is selected by `--config`, or by `PALM_CONFIG` when the option is absent. `PALM_API_BASE`, `PALM_API_KEY`, and `PALM_MODEL` override individual file fields. No implicit configuration-file search is performed.
+These commands check shell syntax, CLI startup, and the bundled example's separate workspace. If using a custom Cargo target directory, adjust the binary paths. Shell syntax checks do not build or run the Docker image.
 
-The legacy `base`, `key`, and `model` JSON fields remain supported. Relative configuration paths are resolved against the invoking directory, independently of the target path. Missing, empty, unreadable, or malformed configuration fails before these commands modify the target tree. This validates configuration loading, not service availability.
+## Installation
 
-Prompt templates and request parameters are unchanged. Model configuration is no longer embedded in the binary. The real-service smoke test is ignored by default and covers the non-streaming request used by the production workflow.
+To check an actual installation, run:
 
-## Checks Completed in This Batch
+```sh
+./install.sh
+cargo brinfo --help
+cargo call-chain --help
+focxt --help
+utgen --help
+```
 
-| Check | Result |
-| --- | --- |
-| Workspace build with no `api.json` | Passed on the pinned nightly. |
-| Default workspace tests with no model credentials | Passed: 13 tests after the proxy-isolation fix, one real-service test ignored. |
-| Configuration tests | File loading and reload, explicit-file precedence, environment-selected file, field overrides, environment-only configuration, missing/empty fields, unreadable file, and redacted diagnostics passed. |
-| Local HTTP model fixtures | Generation and repair request paths use the runtime endpoint, key, and model; existing request parameters and usage parsing are preserved. |
-| Proxy isolation | The new subprocess regression failed before the fix and passed after it. Both local request fixtures explicitly bypass system proxies; the full test suite also passed with upper/lowercase proxy variables set to `http://127.0.0.1:9` and both `NO_PROXY` variants empty. |
-| CLI tests | Help and non-model commands do not load model configuration; missing configuration stops both `gen` and `fix` before target modification; `--config` works before or after the subcommand. |
-| Installer behavior checks with a substitute Cargo executable | Other working directories, paths with spaces, tool selection, validation before installation, help, preserved diagnostics/exit status, and stopping after failure passed. |
-| Actual installation | All four packages installed without model configuration into an isolated installation directory; existing user-installed tools were not replaced. |
-| Installed CLI checks | `cargo-brinfo --help`, `cargo-call-chain --help`, `focxt --help`, and `utgen --help` passed from outside the repository. |
-| Shell syntax | `bash -n install.sh docker/docker-build docker/docker-run` passed. |
+The installer installs all four tool packages using the repository's toolchain and stops on the first Cargo failure. Keep the installation directory in `PATH`. The [installation guide](../README.md#installation) also describes selecting individual tools.
 
-The installer retains Cargo output, uses the repository directory to select its toolchain, and no longer runs an unconditional `cargo clean`.
+Model configuration is loaded only when generation or repair starts. See the [runtime configuration reference](../utgen/README.md#prerequisites) for file selection and environment overrides.
 
-The proxy regression configures only child-process environments, so parallel tests do not change one another's environment. The ordinary LLM constructor retains the SDK's default proxy behavior. The fixtures inject a separate HTTP client with proxies disabled. A test-only `reqwest` dependency reuses the existing locked version; dependency versions, checksums, and lockfile format were not changed.
+## CI and Further Checks
 
-The [GitHub Actions workflow](../.github/workflows/ci.yml) configures the build, default tests, CLI help checks, installer syntax/help, and standalone bytes metadata checks on Ubuntu 24.04. Its YAML was parsed locally. The [Linux branch run](https://github.com/cppbear/PALM/actions/runs/37619301888) and [PR run](https://github.com/cppbear/PALM/actions/runs/37619401144) passed before [PR #5](https://github.com/cppbear/PALM/pull/5) was merged. Subsequent pipeline validation is recorded in [minimal pipeline](minimal-pipeline.md).
+The [CI workflow](../.github/workflows/ci.yml) checks builds, ordinary tests, CLI entry points, installer syntax/help, and example metadata on Linux. It also runs the [minimal pipeline and related regressions](minimal-pipeline.md) and [Bytes analysis checks](bytes-analysis.md). Actual tool installation and Docker image validation are separate checks.
 
-## Validation Limits and Next Batch
+Changes limited to READMEs and the documentation paths selected in the workflow receive a patch whitespace check. Other changes and manual workflow runs execute the full offline suite. A documentation-only CI result does not imply that Rust tests ran.
 
-- No real model service was contacted. Local fixtures validate request construction and response handling, not model compatibility or generation quality.
-- The tests added here do not exercise preprocessing correctness, focal-context completeness, generated-test insertion, compilation repair, or coverage measurement end to end.
-- Docker was not built: the local Docker daemon was unavailable. The basic Linux CI passed; the Docker image itself remains unverified.
-- The pinned toolchain and existing dependency versions were retained; `Cargo.lock` adds only the test dependency edge described above. Compatibility of the coverage tool and target-crate dependencies needs separate verification.
-- At this baseline, `utgen analyze` was a logging-only command. The following batch connects analysis and adds a minimal end-to-end check; see [minimal pipeline](minimal-pipeline.md). Concurrency, general recovery, and cache invalidation remain follow-up work.
-
-The next batch should use a small target crate to verify the relationship between prepared source files, analysis locations, function identities, focal context, and generated tests. It should establish failure propagation and coverage semantics before proceeding to a large bytes run.
+The offline checks use temporary target copies and local model responses. They cover the scenarios documented in each guide; they do not measure model quality, provide general crash recovery, or establish support for arbitrary Rust projects.
