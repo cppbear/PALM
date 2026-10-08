@@ -103,7 +103,7 @@ cargo build --workspace --locked
 cargo test --workspace --locked
 ```
 
-Default tests use local model-response fixtures and do not contact a model service. The real-service test is opt-in; see [utgen testing](utgen/README.md#testing). Dependency downloads may still require network access. [Build validation](docs/build-validation.md) records the baseline and checks performed.
+Default tests use local model-response fixtures and do not contact a model service. The real-service test is opt-in; see [utgen testing](utgen/README.md#testing). Dependency downloads may still require network access. See [build and installation checks](docs/build-validation.md) for commands and CI scope.
 
 The [GitHub Actions workflow](.github/workflows/ci.yml) runs on pull requests and pushes to main, canceling superseded runs for the same PR or branch. Changes limited to READMEs and the selected documentation paths under `docs/` receive a lightweight patch whitespace check. Other changes and manual workflow runs execute the full offline suite on Linux.
 
