@@ -1,13 +1,14 @@
 mod backup;
 mod check;
-mod clean;
+// Retain Cargo artifacts between candidates; keep the cleanup implementation for now.
+// mod clean;
 mod insert;
 mod preprocess;
 
 use crate::types::BrData;
 pub use backup::*;
 pub use check::*;
-pub use clean::*;
+// pub use clean::*;
 pub use insert::insert_test;
 pub use preprocess::*;
 use std::{

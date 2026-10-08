@@ -9,7 +9,7 @@ use crate::{
     gene::LLM,
     types::{InsertKind, TestGenInfo},
     utils::{
-        RestoreOnDrop, cargo_check, create_backup, insert_test, restore_file, target_clean,
+        RestoreOnDrop, cargo_check, create_backup, insert_test, restore_file,
     },
 };
 use log::{error, info, warn};
@@ -239,7 +239,7 @@ async fn compilation_fix_assistant_for_an_error(
         restore_file(file_path);
         let restore = RestoreOnDrop(file_path);
         insert_test(insert_kind, Path::new(&file_path), &mod_code);
-        let _ = target_clean(&work_path);
+        // let _ = target_clean(&work_path);
 
         let test_type = TestType::Error;
         run_test(project_path, work_path, test_type, false, false);
@@ -344,7 +344,7 @@ async fn compilation_fix_assistant_for_one_fn(
                         restore_file(&file_path);
                         let restore = RestoreOnDrop(&file_path);
                         insert_test(insert_kind, Path::new(&file_path), &mod_code);
-                        let _ = target_clean(&work_path);
+                        // let _ = target_clean(&work_path);
 
                         let test_type = TestType::Error;
                         let test_name = format!("test_{}", fn_name);
@@ -421,7 +421,7 @@ async fn compilation_fix_assistant_for_one_fn(
                         insert_test(insert_kind, &file_path, &mod_code);
                         *test_code = test_file_content.codes;
                         chain_test.repaired[num] = true;
-                        let _ = target_clean(&work_path);
+                        // let _ = target_clean(&work_path);
 
                         chain_test.can_compile[num] = cargo_check(&work_path);
                         id += 1;

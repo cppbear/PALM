@@ -34,6 +34,8 @@ The script prints the temporary directory containing source copies, command logs
 
 The regression script runs in Linux CI after the ordinary workspace tests. It uses the real analyzers, compiler, coverage tool, prompt builder, response parser, candidate checks, and repair machinery. Model replies are deterministic fixtures; these results do not measure LLM quality.
 
+Generation, repair, and statistics no longer call the partial `target_clean` helper between candidates. Cargo reuses build artifacts as sources are replaced and restored; analysis still clears the check cache, and coverage retains its own profile cleanup. The task regression preserves the target directory across scenarios and checks compilation failures followed by successful repairs.
+
 ## Coverage Interpretation
 
 `original/original-coverage.json` and `.xml` measure production code exercised by all original unit and integration tests through `utgen coverage`. Test bodies and helpers contribute to neither the coverage numerator nor denominator. The check requires both original `classify` branches to have executed. LLVM can emit separate records for the same branch location in different test binaries; the check unions those outcomes instead of requiring both in one record.
