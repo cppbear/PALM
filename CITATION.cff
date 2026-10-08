@@ -1,0 +1,32 @@
+cff-version: 1.2.0
+message: "If you use PALM in your research, please cite the ASE 2025 paper below."
+title: "PALM"
+type: software
+authors:
+  - name: "PALM contributors"
+repository-code: "https://github.com/cppbear/PALM"
+url: "https://github.com/cppbear/PALM"
+license: MIT
+preferred-citation:
+  type: conference-paper
+  title: "PALM: Synergizing Program Analysis and LLMs to Enhance Rust Unit Test Coverage"
+  authors:
+    - family-names: Chu
+      given-names: Bei
+    - family-names: Feng
+      given-names: Yang
+    - family-names: Liu
+      given-names: Kui
+    - family-names: Shi
+      given-names: Hange
+    - family-names: Nan
+      given-names: Zifan
+    - family-names: Guo
+      given-names: Zhaoqiang
+    - family-names: Xu
+      given-names: Baowen
+  collection-title: "2025 40th IEEE/ACM International Conference on Automated Software Engineering (ASE)"
+  year: 2025
+  start: 2720
+  end: 2732
+  doi: "10.1109/ASE63991.2025.00223"

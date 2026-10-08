@@ -15,6 +15,12 @@ This repository brings together PALM's implementation, the technical guide devel
 
 The source repositories have separate Git histories. Selected files are imported with their origins recorded here; this integration does not merge those histories or remove the source repositories.
 
+## Licensing and Attribution
+
+PALM's source code, scripts, and project documentation use the root [MIT License](../LICENSE), with collective attribution to PALM contributors. The five tool crates declare the same license through workspace metadata. The selected source revisions above did not contain a license for the PALM implementation; this repository now explicitly adopts MIT rather than inheriting the example crate's license.
+
+The bundled `examples/bytes` crate retains its [original MIT license and copyright notice](../examples/bytes/LICENSE). The technical guide and images originate from `rust-utgen`; the conference PDFs originate from `ase2025` and are preserved as described in [ASE 2025 materials](ase2025/README.md). Existing third-party notices and rights in included material remain applicable; the root license does not replace them.
+
 ## Layout and Compatibility
 
 The Rust workspace, installation script, and Docker scripts now reside at the repository root. The two original README files are consolidated, and the root `.gitignore` retains all original rules, including `api.json`.
