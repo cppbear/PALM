@@ -81,9 +81,9 @@ Generation or repair completing does not mean every candidate passes. Inspect bo
 | --- | --- |
 | [brinfo](brinfo/README.md) | Extract function condition chains from HIR and MIR. |
 | [focxt](focxt/README.md) | Construct code context for each focal function. |
-| `focxt/call_chain/` | Extract calls and type dependencies through `cargo call-chain`. |
+| [focxt/call_chain](focxt/call_chain/README.md) | Extract calls and type dependencies through `cargo call-chain`. |
 | [utgen](utgen/README.md) | Generate tests, check compilation, repair tests, and collect coverage. |
-| `build-utils/` | Configure the compiler library search path during builds. |
+| [build-utils](build-utils/README.md) | Configure the compiler library search path during builds. |
 | [examples](examples/README.md) | The minimal fixture, bundled bytes target, and usage instructions. |
 | `docker/` | Container build and run scripts. |
 | [docs](docs/README.md) | Technical guide, validation guides, and ASE 2025 materials. |
