@@ -121,12 +121,18 @@ def main():
                     elif 'generate accurate test oracles' in system:
                         answer = 'assert_eq!(actual, 2);'
                     else:
-                        argument = '1' if state['integration'] else '"bad"'
+                        argument = '1' if state['integration'] or state['invalid_answers'] else '"bad"'
                         body = ('let actual = ' + function + '(1);' if 'Omit test oracles' in system
                                 else f'assert_eq!({function}({argument}), 2);')
                         imports = ('use palm_fixture::*;\nuse std::cmp::max;\nuse absent_crate::Missing;\n'
                                    if state['integration'] else '')
                         answer = imports + '#[test]\nfn generated() {\n    ' + body + '\n}\n'
+                        if state['invalid_answers']:
+                            with lock:
+                                if len(state['code_answers']) < state['invalid_answers']:
+                                    answer = 'fn helper() {}'
+                                answer = '```rust\n' + answer + '```'
+                                state['code_answers'].append(answer)
                 else:
                     file = re.search(r'You can only modify lines \d+ to \d+ in file (.+?)\. For your answer', user).group(1)
                     match = re.search(r'^\[(\d+)\](.*assert_eq!\(f\d+\("bad"\), 2\);.*)$', user, re.M)
@@ -164,7 +170,8 @@ def main():
     threading.Thread(target=server.serve_forever, daemon=True).start()
     env.update(PALM_API_BASE=f'http://127.0.0.1:{server.server_port}/v1', PALM_API_KEY='fixture', PALM_MODEL='fixture')
 
-    def run(label, command, limit=1, integration=False, missing_usage=False, fault=None, fail=False, backpressure=False):
+    def run(label, command, limit=1, integration=False, missing_usage=False, fault=None, fail=False, backpressure=False,
+            invalid_answers=0):
         monitor = work / label
         monitor.mkdir()
         (monitor / 'compiler.json').write_text(json.dumps(dict(active=0, peak=0, total=0, source_changes=0)))
@@ -173,6 +180,7 @@ def main():
         with lock:
             state.clear()
             state.update(active=0, peak=0, total=0, errors=[], limit=limit, integration=integration, missing_usage=missing_usage, fault=fault, fault_sent=False)
+            state.update(invalid_answers=invalid_answers, code_answers=[])
         ready.clear()
         watcher = None
         if backpressure:
@@ -247,6 +255,50 @@ def main():
 
     try:
         run('analyze', ['utgen', 'analyze', '-p', str(root)])
+        # Real reply parsing, format retries and saving on a single selected function.
+        nmap = json.loads((root / 'brinfo/name_map.json').read_text())
+        one_name = sorted(nmap)[0]
+        one_file = work / 'one-function.txt'
+        one_file.write_text(one_name + '\n')
+        for oracle in [False, True]:
+            stage = 'prefix' if oracle else 'test'
+            for case in ['recover', 'exhaust', 'budget']:
+                reset()
+                cap = 2 if oracle else 1  # Input inference consumes the first request in oracle mode.
+                extra = ['--functions-file', str(one_file)]
+                if oracle:
+                    extra.append('--oracle')
+                if case == 'budget':
+                    extra += ['--max-requests', str(cap)]
+                label = f'{stage}-without-tests-{case}'
+                measured = run(label, command('gen', 1, *extra), invalid_answers=1 if case == 'recover' else 3,
+                               fail=case != 'recover')
+                attempts = {'recover': 2, 'exhaust': 3, 'budget': 1}[case]
+                expected_requests = attempts + int(oracle) + int(oracle and case == 'recover')
+                assert measured['total'] == expected_requests, measured
+                assert len(measured['code_answers']) == attempts
+                chain_dir = root / 'utgen/generation/answer' / nmap[one_name] / '000'
+                files = sorted(chain_dir.glob(f'{stage}-attempt-*.txt'))
+                assert len(files) == attempts, files
+                for index, file in enumerate(files):
+                    assert file.read_text() == measured['code_answers'][index], file
+                accepted = chain_dir / ('prefix.rs' if oracle else 'code.rs')
+                candidate = root / 'utgen/generation/pre_fix' / (nmap[one_name] + '.json')
+                assert accepted.exists() == candidate.exists() == (case == 'recover')
+                report = json.loads((root / 'utgen/generation/gen-requests.json').read_text())
+                assert report['reported_prompt_tokens'] == expected_requests, report
+                assert report['reported_completion_tokens'] == expected_requests, report
+                assert report['budget_exhausted'] == (case == 'budget'), report
+                log = (work / label / 'command.log').read_text()
+                assert 'No #[test] function found' in log, log[-2000:]
+                assert not (root / 'src/lib.rs.bak').exists()
+                if case == 'recover':
+                    assert '```' not in accepted.read_text() and 'fn helper()' not in accepted.read_text()
+                    if oracle:
+                        assert 'assert' not in accepted.read_text(), 'a prefix need not contain an oracle'
+                    results('result', 1, [one_name])
+                else:
+                    assert not (root / 'utgen/result').exists()
         seed = work / 'broken-candidates'
         for n in [1, 2, 4]:
             reset()

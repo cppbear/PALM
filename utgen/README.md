@@ -151,6 +151,10 @@ utgen gen -p <target-crate-path> --requirement --context
 
 Generation validates the branch index, context index, context files, and source paths before modifying the target. Missing or inconsistent artifacts are errors. A failed generation task is reported instead of being silently lost before statistics. `--tasks 0` is rejected.
 
+Direct-test and prefix answers must parse as Rust and contain at least one supported `#[test]` function. Syntax errors and answers containing only helpers, imports, comments, or an empty test module use the existing format retry loop, with at most three attempts. Exhaustion fails that function's generation and skips subsequent command statistics. This checks candidate presence; compilation and execution still determine whether a candidate works. Prefixes are accepted without assertions because oracle generation follows separately.
+
+Each answer returned by the request layer is saved before code-fence removal and parsing, under `utgen/generation/answer/<encoded>/<chain>/test-attempt-N.txt` or `prefix-attempt-N.txt`, with N starting at 1. Logs identify the stage, chain, attempt and rejection reason. Accepted code retains the existing `code.rs` / `prefix.rs` layout. These paths are reused across invocations, not an invocation history; use fresh copies for separate trials. Existing cached candidates, including old empty candidates, are still skipped and are not migrated by this validation change.
+
 Each generation job handles one focal function, including its condition chains and input/prefix/oracle stages sequentially. It holds a slot until its result enters the bounded queue, which also has capacity N. A single consumer validates candidates and their imports while other jobs can await model responses. Thus N limits active generation jobs, not the number of compiler processes or Cargo's internal build jobs; buffered results and the candidate currently being validated are separate.
 
 Generation may append an `ntest` dependency to the target's Cargo.toml. Existing `utgen/generation/pre_fix/<encoded>.json` results are skipped, so use a fresh target copy for a different model, prompt, or generation mode.

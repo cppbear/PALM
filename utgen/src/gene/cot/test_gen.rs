@@ -1,20 +1,11 @@
-use super::LLM;
-use super::Prompt;
-use super::{extract_test_functions, try_parse};
+use super::{LLM, Prompt, extract_test_functions};
 use crate::types::{ChainTestAnswer, TestInfo};
-use log::{error, info};
+use log::error;
 use rand::Rng;
 use std::collections::HashSet;
 use std::fs;
-use std::io::Write;
 use std::path::Path;
 use tokio::time::{Duration, sleep};
-
-fn postprocess(inputs: &mut Vec<String>) {
-    for input in inputs.iter_mut() {
-        *input = input.replace("```rust", "").replace("```", "");
-    }
-}
 
 pub async fn gen_test(
     llm: &LLM,
@@ -31,16 +22,15 @@ pub async fn gen_test(
     let mut user_pt = static_pt.clone() + &conds.join("");
     user_pt += &pt_info.depend_pt;
 
-    let mut parse_retry = 0;
-    while parse_retry < 3 {
-        if parse_retry != 0 {
+    for attempt in 1..=3 {
+        if attempt > 1 {
             let random_secs = {
                 let mut rng = rand::rng();
                 rng.random_range(10..=30)
             };
             sleep(Duration::from_secs(random_secs)).await;
         }
-        let (mut answers, usage_completion, usage_prompt) =
+        let (answers, usage_completion, usage_prompt) =
             match llm.fetch_answer(Some(system_pt), &user_pt, 1, false).await {
                 Ok(answer) => answer,
                 Err(error) => {
@@ -51,46 +41,45 @@ pub async fn gen_test(
         completion_tokens += usage_completion;
         prompt_tokens += usage_prompt;
 
-        postprocess(&mut answers);
-
-        answers.retain(|answer| try_parse(answer).is_ok());
-        if answers.is_empty() {
-            error!("No valid answer found.");
-            parse_retry += 1;
-            continue;
-        }
-
-        // info!("Answers: {:?}", answers);
-        let mut test_answer_list = vec![];
-        let path = answer_dir.join(format!("{:03}/code.rs", id));
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        let mut file = fs::File::create(&path).unwrap();
-        for (id, answer) in answers.into_iter().enumerate() {
-            let mut test_info_list = vec![];
-            file.write_all(format!("// Answer {}\n\n", id).as_bytes())
-                .unwrap();
-            file.write_all((answer.clone() + "\n\n").as_bytes())
-                .unwrap();
-
-            let codes = extract_test_functions(&answer);
-            for (attrs, code) in codes.test_fns {
-                let test_info = TestInfo::new(attrs, vec![], vec![code]);
-                test_info_list.push(test_info);
+        // LLM guarantees one nonempty answer. Keep it before stripping fences or parsing.
+        let raw_answer = &answers[0];
+        let chain_dir = answer_dir.join(format!("{id:03}"));
+        fs::create_dir_all(&chain_dir).unwrap();
+        fs::write(
+            chain_dir.join(format!("test-attempt-{attempt}.txt")),
+            raw_answer,
+        )
+        .unwrap();
+        let answer = raw_answer.replace("```rust", "").replace("```", "");
+        let codes = match extract_test_functions(&answer) {
+            Ok(codes) => codes,
+            Err(reason) => {
+                error!("Test generation rejected chain {id}, attempt {attempt}/3: {reason}");
+                continue;
             }
-            let mut use_set = codes.uses.into_iter().collect::<HashSet<String>>();
-            if integration {
-                use_set.remove("use super::*;");
-            }
-            test_answer_list.push(ChainTestAnswer::new(
-                use_set.into_iter().collect(),
-                codes.has_test_mod,
-                codes.common,
-                test_info_list,
-                completion_tokens,
-                prompt_tokens,
-            ));
+        };
+        fs::write(
+            chain_dir.join("code.rs"),
+            format!("// Answer 0\n\n{answer}\n\n"),
+        )
+        .unwrap();
+        let tests = codes
+            .test_fns
+            .into_iter()
+            .map(|(attrs, code)| TestInfo::new(attrs, vec![], vec![code]))
+            .collect();
+        let mut use_set = codes.uses.into_iter().collect::<HashSet<String>>();
+        if integration {
+            use_set.remove("use super::*;");
         }
-        return Some(test_answer_list);
+        return Some(vec![ChainTestAnswer::new(
+            use_set.into_iter().collect(),
+            codes.has_test_mod,
+            codes.common,
+            tests,
+            completion_tokens,
+            prompt_tokens,
+        )]);
     }
     None
 }
