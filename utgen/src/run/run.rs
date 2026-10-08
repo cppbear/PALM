@@ -25,6 +25,52 @@ pub enum TestType {
     Error,
 }
 
+/// Return a temporarily moved test directory on normal completion or unwind.
+struct MovedTestDirectory {
+    original: PathBuf,
+    temporary: PathBuf,
+    restored: bool,
+}
+
+impl MovedTestDirectory {
+    fn new(original: &Path, temporary: &Path) -> std::io::Result<Self> {
+        if temporary.exists() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                format!(
+                    "{} already exists; preserve it and use a fresh working copy",
+                    temporary.display()
+                ),
+            ));
+        }
+        fs::rename(original, temporary)?;
+        Ok(Self {
+            original: original.to_owned(),
+            temporary: temporary.to_owned(),
+            restored: false,
+        })
+    }
+
+    fn finish(mut self) -> std::io::Result<()> {
+        fs::rename(&self.temporary, &self.original)?;
+        self.restored = true;
+        Ok(())
+    }
+}
+
+impl Drop for MovedTestDirectory {
+    fn drop(&mut self) {
+        if !self.restored {
+            if let Err(error) = fs::rename(&self.temporary, &self.original) {
+                error!(
+                    "Cannot restore {}: {error}; directory retained at {}",
+                    self.original.display(), self.temporary.display()
+                );
+            }
+        }
+    }
+}
+
 pub fn run_test(
     project_dir: &Path,
     work_path: &Path,
@@ -418,14 +464,14 @@ pub fn gen_test_rate(
         // let _ = target_clean(work_dir);
         let test_path = work_dir.join("tests");
         let bak_test_path2 = work_dir.join("tests.bak2");
-        fs::rename(&test_path, &bak_test_path2).unwrap();
+        let generated_tests = MovedTestDirectory::new(&test_path, &bak_test_path2)
+            .expect("cannot temporarily move generated tests");
         gen_codes_lines_and_branches_covered(
             project_dir,
             work_dir,
             &test_gen_infos,
             &mut test_rate_infos,
         );
-        fs::rename(&bak_test_path2, &test_path).unwrap();
         dump_result_for_test_rate_infos(
             &test_rate_infos,
             project_dir,
@@ -437,6 +483,7 @@ pub fn gen_test_rate(
         if is_pre {
             gen_coverage_rate_for_original_tests(project_dir, work_dir, &test_gen_infos);
         }
+        generated_tests.finish().expect("cannot restore generated tests");
     }
 }
 
@@ -1410,7 +1457,13 @@ fn gen_coverage_rate_for_original_tests(
     let bak_test_dir = work_dir.join("tests.bak");
     if exists(&bak_test_dir).unwrap() {
         info!("Generate coverage rate for original tests");
-        fs::rename(&bak_test_dir, &test_dir).unwrap();
+        // Import checks can leave an empty tests/ directory in unit mode.
+        if test_dir.exists() {
+            fs::remove_dir(&test_dir)
+                .expect("tests directory must be empty before restoring original tests");
+        }
+        let original_tests = MovedTestDirectory::new(&bak_test_dir, &test_dir)
+            .expect("cannot restore original tests for coverage");
         // let _ = target_clean(work_dir);
         let test_type = TestType::CoverageRate;
         run_test(project_dir, work_dir, test_type, true, false);
@@ -1443,7 +1496,8 @@ fn gen_coverage_rate_for_original_tests(
             );
             original_test_rate_infos.push(original_test_rate_info);
         }
-        fs::rename(&test_dir, &bak_test_dir).unwrap();
+        original_tests.finish()
+            .expect("cannot return original tests to their backup");
         dump_result_for_original_test_rate_infos(&original_test_rate_infos, project_dir, work_dir);
         let coverage_file_path = work_dir.join("coverage.xml");
         let lcov_file_path = work_dir.join("coverage.json");
