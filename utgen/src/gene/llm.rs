@@ -1,29 +1,116 @@
 use crate::LlmConfig;
-use async_openai::{
-    Client,
-    config::OpenAIConfig,
-    types::{
-        ChatCompletionRequestMessage, ChatCompletionRequestSystemMessageArgs,
-        ChatCompletionRequestUserMessageArgs, CreateChatCompletionRequestArgs,
-    },
+use async_openai::types::{
+    ChatCompletionRequestMessage, ChatCompletionRequestSystemMessageArgs,
+    ChatCompletionRequestUserMessageArgs, CreateChatCompletionRequest,
+    CreateChatCompletionRequestArgs, CreateChatCompletionResponse,
 };
-use futures::StreamExt;
+use serde::Serialize;
+use std::{
+    fs, io,
+    path::Path,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
+use tokio::time::{sleep, timeout};
+
+const MAX_ATTEMPTS: u32 = 3;
+
+#[derive(Default, Serialize)]
+struct RequestStats {
+    attempts: u64,
+    failed_attempts: u64,
+    responses_without_usage: u64,
+    reported_completion_tokens: u64,
+    reported_prompt_tokens: u64,
+}
+
+struct RequestError {
+    message: String,
+    retryable: bool,
+}
+
+impl From<reqwest::Error> for RequestError {
+    fn from(error: reqwest::Error) -> Self {
+        Self {
+            retryable: error.is_connect()
+                || error.is_timeout()
+                || error.is_body()
+                || error.is_request(),
+            message: error.to_string(),
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct LLM {
     config: LlmConfig,
-    client: Client<OpenAIConfig>,
+    client: reqwest::Client,
+    request_timeout: Duration,
+    stats: Arc<Mutex<RequestStats>>,
 }
 
 impl LLM {
     pub fn new(config: LlmConfig) -> Self {
-        let api_config = OpenAIConfig::new()
-            .with_api_base(&config.base)
-            .with_api_key(&config.key);
         Self {
             config,
-            client: Client::with_config(api_config),
+            client: reqwest::Client::new(),
+            request_timeout: Duration::from_secs(180),
+            stats: Arc::new(Mutex::new(RequestStats::default())),
         }
+    }
+
+    pub fn with_request_timeout(mut self, duration: Duration) -> Self {
+        self.request_timeout = duration;
+        self
+    }
+
+    pub fn request_count(&self) -> u64 {
+        self.stats.lock().unwrap().attempts
+    }
+
+    /// Persist reported usage, including an explicit incomplete-usage marker.
+    pub fn write_request_summary(&self, path: &Path) -> io::Result<()> {
+        let stats = self.stats.lock().unwrap();
+        let mut summary = serde_json::to_value(&*stats)?;
+        summary["usage_complete"] =
+            (stats.failed_attempts == 0 && stats.responses_without_usage == 0).into();
+        fs::create_dir_all(path.parent().unwrap())?;
+        fs::write(path, serde_json::to_vec_pretty(&summary)?)
+    }
+
+    async fn send_once(
+        &self,
+        request: &CreateChatCompletionRequest,
+    ) -> Result<CreateChatCompletionResponse, RequestError> {
+        let response = self
+            .client
+            .post(format!(
+                "{}/chat/completions",
+                self.config.base.trim_end_matches('/')
+            ))
+            .bearer_auth(&self.config.key)
+            .json(request)
+            .send()
+            .await?;
+        let status = response.status();
+        let body = response.bytes().await?;
+        if !status.is_success() {
+            let detail: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+            let error = &detail["error"];
+            let quota_exhausted =
+                error["code"] == "insufficient_quota" || error["type"] == "insufficient_quota";
+            return Err(RequestError {
+                message: format!(
+                    "Model HTTP {status}: {}",
+                    error["message"].as_str().unwrap_or("request failed")
+                ),
+                retryable: (status.as_u16() == 429 && !quota_exhausted) || status.is_server_error(),
+            });
+        }
+        serde_json::from_slice(&body).map_err(|error| RequestError {
+            message: format!("Invalid model response JSON: {error}"),
+            retryable: false,
+        })
     }
 
     pub async fn fetch_answer(
@@ -32,28 +119,27 @@ impl LLM {
         user_pt: &str,
         n: u8,
         stream: bool,
-    ) -> Result<(Vec<String>, u32, u32), Box<dyn std::error::Error>> {
-        let client = &self.client;
-        let system_msg = if system_pt.is_none() {
-            None
-        } else {
-            Some(
+    ) -> io::Result<(Vec<String>, u32, u32)> {
+        if n != 1 || stream {
+            return Err(io::Error::other(
+                "PALM supports one non-streaming answer per request",
+            ));
+        }
+        let mut messages = Vec::new();
+        if let Some(system) = system_pt {
+            messages.push(ChatCompletionRequestMessage::System(
                 ChatCompletionRequestSystemMessageArgs::default()
-                    .content(system_pt.unwrap())
-                    .build()?,
-            )
-        };
-        let user_msg = ChatCompletionRequestUserMessageArgs::default()
-            .content(user_pt)
-            .build()?;
-        let messages = if system_msg.is_none() {
-            vec![ChatCompletionRequestMessage::User(user_msg)]
-        } else {
-            vec![
-                ChatCompletionRequestMessage::System(system_msg.unwrap()),
-                ChatCompletionRequestMessage::User(user_msg),
-            ]
-        };
+                    .content(system)
+                    .build()
+                    .map_err(io::Error::other)?,
+            ));
+        }
+        messages.push(ChatCompletionRequestMessage::User(
+            ChatCompletionRequestUserMessageArgs::default()
+                .content(user_pt)
+                .build()
+                .map_err(io::Error::other)?,
+        ));
         let request = CreateChatCompletionRequestArgs::default()
             .model(&self.config.model)
             .max_tokens(10000_u32)
@@ -62,40 +148,69 @@ impl LLM {
             .n(1)
             .stream(false)
             .messages(messages)
-            .build()?;
-        let mut result;
-        let mut completion_tokens = 0;
-        let mut prompt_tokens = 0;
-        if !stream {
-            let response = client.chat().create(request).await?;
-            result = response
-                .choices
-                .into_iter()
-                .filter_map(|c| c.message.content)
-                .collect();
-            let usage = response.usage.unwrap();
-            completion_tokens += usage.completion_tokens;
-            prompt_tokens += usage.prompt_tokens;
-        } else {
-            result = vec!["".to_string(); n as usize];
-            let mut stream = client.chat().create_stream(request).await?;
-            while let Some(response) = stream.next().await {
-                match response {
-                    Ok(chunk) => {
-                        for choice in chunk.choices.into_iter() {
-                            if let Some(content) = choice.delta.content {
-                                result[choice.index as usize] += &content;
-                            }
+            .build()
+            .map_err(io::Error::other)?;
+        for attempt in 1..=MAX_ATTEMPTS {
+            self.stats.lock().unwrap().attempts += 1;
+            let response = match timeout(self.request_timeout, self.send_once(&request)).await {
+                Ok(result) => result,
+                Err(_) => Err(RequestError {
+                    message: format!(
+                        "Model request timed out after {}s",
+                        self.request_timeout.as_secs_f64()
+                    ),
+                    retryable: true,
+                }),
+            };
+            match response {
+                Ok(response) => {
+                    let mut stats = self.stats.lock().unwrap();
+                    let (completion, prompt) = match response.usage {
+                        Some(usage) => {
+                            stats.reported_completion_tokens += u64::from(usage.completion_tokens);
+                            stats.reported_prompt_tokens += u64::from(usage.prompt_tokens);
+                            (usage.completion_tokens, usage.prompt_tokens)
                         }
-                        let usage = chunk.usage.unwrap();
-                        completion_tokens += usage.completion_tokens;
-                        prompt_tokens += usage.prompt_tokens;
+                        None => {
+                            stats.responses_without_usage += 1;
+                            log::warn!(
+                                "Model response has no usage; reported token totals are incomplete"
+                            );
+                            (0, 0)
+                        }
+                    };
+                    if response.choices.len() != 1 {
+                        return Err(io::Error::other(
+                            "Model response must contain exactly one choice",
+                        ));
                     }
-                    Err(e) => return Err(Box::new(e)),
+                    let answer = response
+                        .choices
+                        .into_iter()
+                        .next()
+                        .unwrap()
+                        .message
+                        .content
+                        .filter(|content| !content.trim().is_empty())
+                        .ok_or_else(|| {
+                            io::Error::other("Model response contains no answer text")
+                        })?;
+                    return Ok((vec![answer], completion, prompt));
+                }
+                Err(error) => {
+                    self.stats.lock().unwrap().failed_attempts += 1;
+                    if !error.retryable || attempt == MAX_ATTEMPTS {
+                        return Err(io::Error::other(format!(
+                            "{} (attempt {attempt}/{MAX_ATTEMPTS})",
+                            error.message
+                        )));
+                    }
+                    log::warn!("{}; retrying ({attempt}/{MAX_ATTEMPTS})", error.message);
+                    sleep(Duration::from_secs(u64::from(attempt))).await;
                 }
             }
         }
-        Ok((result, completion_tokens, prompt_tokens))
+        unreachable!("the last attempt returns success or failure")
     }
 
     pub async fn get_answer(
@@ -103,66 +218,8 @@ impl LLM {
         prompt: &str,
         n: u8,
         stream: bool,
-    ) -> Result<(Vec<String>, u32, u32), Box<dyn std::error::Error + Send>> {
-        let client = &self.client;
-        // let msg = ChatCompletionRequestUserMessageArgs::default()
-        //     .content(prompt)
-        //     .build()?;
-        let msg = ChatCompletionRequestUserMessageArgs::default()
-            .content(prompt)
-            .build()
-            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)?;
-        let mut completion_tokens = 0;
-        let mut prompt_tokens = 0;
-        let request = CreateChatCompletionRequestArgs::default()
-            .model(&self.config.model)
-            .max_tokens(10000_u32)
-            .temperature(1.0)
-            .top_p(0_f32)
-            .n(1)
-            .stream(false)
-            .messages(vec![ChatCompletionRequestMessage::User(msg)])
-            .build()
-            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)?;
-        let mut result;
-        if !stream {
-            let response = client
-                .chat()
-                .create(request)
-                .await
-                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)?;
-            result = response
-                .choices
-                .into_iter()
-                .filter_map(|c| c.message.content)
-                .collect();
-            let usage = response.usage.unwrap();
-            completion_tokens += usage.completion_tokens;
-            prompt_tokens += usage.prompt_tokens;
-        } else {
-            result = vec!["".to_string(); n as usize];
-            let mut stream = client
-                .chat()
-                .create_stream(request)
-                .await
-                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)?;
-            while let Some(response) = stream.next().await {
-                match response {
-                    Ok(chunk) => {
-                        for choice in chunk.choices.into_iter() {
-                            if let Some(content) = choice.delta.content {
-                                result[choice.index as usize] += &content;
-                            }
-                        }
-                        let usage = chunk.usage.unwrap();
-                        completion_tokens += usage.completion_tokens;
-                        prompt_tokens += usage.prompt_tokens;
-                    }
-                    Err(e) => return Err(Box::new(e)),
-                }
-            }
-        }
-        Ok((result, completion_tokens, prompt_tokens))
+    ) -> io::Result<(Vec<String>, u32, u32)> {
+        self.fetch_answer(None, prompt, n, stream).await
     }
 }
 
@@ -175,44 +232,66 @@ mod tests {
         time::{Duration, timeout},
     };
 
-    // Exercise the actual HTTP client and request shape without a model service.
-    async fn mock_model() -> (LLM, tokio::task::JoinHandle<serde_json::Value>) {
+    fn completion() -> serde_json::Value {
+        serde_json::json!({
+            "id": "local-response", "object": "chat.completion", "created": 0, "model": "local-model",
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": "local answer"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5}
+        })
+    }
+
+    fn reply(status: u16) -> (u16, String, Duration) {
+        let body = if status == 200 {
+            completion()
+        } else {
+            serde_json::json!({"error": {"message": "fixture error"}})
+        };
+        (status, body.to_string(), Duration::ZERO)
+    }
+
+    // Real HTTP, with counts and delayed bodies to verify the entire attempt deadline.
+    async fn mock_replies(
+        replies: Vec<(u16, String, Duration)>,
+    ) -> (LLM, tokio::task::JoinHandle<Vec<serde_json::Value>>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
-            timeout(Duration::from_secs(10), async move {
-                let (mut socket, _) = listener.accept().await.unwrap();
-                let mut data = Vec::new();
-                let (headers_end, length) = loop {
-                    let mut buffer = [0; 2048];
-                    let count = socket.read(&mut buffer).await.unwrap();
-                    assert!(count > 0, "request ended before headers");
-                    data.extend_from_slice(&buffer[..count]);
-                    if let Some(end) = data.windows(4).position(|s| s == b"\r\n\r\n") {
-                        let headers = String::from_utf8_lossy(&data[..end]).to_lowercase();
-                        assert!(headers.starts_with("post /v1/chat/completions http/1.1"));
-                        assert!(headers.contains("authorization: bearer local-test-key"));
-                        let length = headers.lines().find_map(|line| {
-                            line.strip_prefix("content-length:").map(|n| n.trim().parse::<usize>().unwrap())
-                        }).unwrap();
-                        break (end + 4, length);
+            timeout(Duration::from_secs(15), async move {
+                let mut requests = Vec::new();
+                for (status, body, delay) in replies {
+                    let (mut socket, _) = listener.accept().await.unwrap();
+                    let mut data = Vec::new();
+                    let (headers_end, length) = loop {
+                        let mut buffer = [0; 2048];
+                        let count = socket.read(&mut buffer).await.unwrap();
+                        assert!(count > 0, "request ended before headers");
+                        data.extend_from_slice(&buffer[..count]);
+                        if let Some(end) = data.windows(4).position(|s| s == b"\r\n\r\n") {
+                            let headers = String::from_utf8_lossy(&data[..end]).to_lowercase();
+                            assert!(headers.starts_with("post /v1/chat/completions http/1.1"));
+                            assert!(headers.contains("authorization: bearer local-test-key"));
+                            let length = headers.lines().find_map(|line| {
+                                line.strip_prefix("content-length:").map(|n| n.trim().parse::<usize>().unwrap())
+                            }).unwrap();
+                            break (end + 4, length);
+                        }
+                    };
+                    while data.len() < headers_end + length {
+                        let mut buffer = [0; 2048];
+                        let count = socket.read(&mut buffer).await.unwrap();
+                        assert!(count > 0, "request ended before body");
+                        data.extend_from_slice(&buffer[..count]);
                     }
-                };
-                while data.len() < headers_end + length {
-                    let mut buffer = [0; 2048];
-                    let count = socket.read(&mut buffer).await.unwrap();
-                    assert!(count > 0, "request ended before body");
-                    data.extend_from_slice(&buffer[..count]);
+                    requests.push(serde_json::from_slice(&data[headers_end..headers_end + length]).unwrap());
+                    if status == 0 { continue; } // Deliberately drop the response connection.
+                    let header = format!("HTTP/1.1 {status} Fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+                    socket.write_all(header.as_bytes()).await.unwrap();
+                    sleep(delay).await;
+                    // A timeout deliberately disconnects before its delayed body arrives.
+                    let result = socket.write_all(body.as_bytes()).await;
+                    if delay.is_zero() { result.unwrap(); }
                 }
-                let request = serde_json::from_slice(&data[headers_end..headers_end + length]).unwrap();
-                let body = serde_json::json!({
-                    "id": "local-response", "object": "chat.completion", "created": 0, "model": "local-model",
-                    "choices": [{"index": 0, "message": {"role": "assistant", "content": "local answer"}, "finish_reason": "stop"}],
-                    "usage": {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5}
-                }).to_string();
-                let response = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body);
-                socket.write_all(response.as_bytes()).await.unwrap();
-                request
+                requests
             }).await.expect("local mock server timed out")
         });
         let mut llm = LLM::new(LlmConfig {
@@ -220,12 +299,13 @@ mod tests {
             key: "local-test-key".into(),
             model: "local-model".into(),
         });
-        // Only the local fixture bypasses proxies. LLM::new keeps the SDK's
-        // default proxy behavior for production and the opt-in live test.
-        llm.client = llm
-            .client
-            .with_http_client(reqwest::Client::builder().no_proxy().build().unwrap());
+        // Only fixtures bypass proxies; normal clients retain proxy discovery.
+        llm.client = reqwest::Client::builder().no_proxy().build().unwrap();
         (llm, server)
+    }
+
+    async fn mock_model() -> (LLM, tokio::task::JoinHandle<Vec<serde_json::Value>>) {
+        mock_replies(vec![reply(200)]).await
     }
 
     fn check_request(request: &serde_json::Value) {
@@ -280,7 +360,7 @@ mod tests {
         .unwrap();
         assert_eq!(answers, vec!["local answer"]);
         assert_eq!((completion, prompt), (3, 2));
-        let request = server.await.unwrap();
+        let request = server.await.unwrap().remove(0);
         check_request(&request);
         assert_eq!(request["messages"][0]["role"], "system");
         assert_eq!(request["messages"][1]["content"], "generate a test");
@@ -298,10 +378,110 @@ mod tests {
         .unwrap();
         assert_eq!(answers, vec!["local answer"]);
         assert_eq!((completion, prompt), (3, 2));
-        let request = server.await.unwrap();
+        let request = server.await.unwrap().remove(0);
         check_request(&request);
         assert_eq!(request["messages"][0]["role"], "user");
         assert_eq!(request["messages"][0]["content"], "repair a test");
+    }
+
+    #[tokio::test]
+    async fn missing_usage_keeps_the_answer_and_marks_the_report_incomplete() {
+        let mut body = completion();
+        body.as_object_mut().unwrap().remove("usage");
+        let (llm, server) = mock_replies(vec![(200, body.to_string(), Duration::ZERO)]).await;
+        let answer = llm.fetch_answer(None, "test", 1, false).await.unwrap();
+        assert_eq!(answer, (vec!["local answer".into()], 0, 0));
+        assert_eq!(server.await.unwrap().len(), 1);
+        let path =
+            std::env::temp_dir().join(format!("palm-request-usage-{}.json", std::process::id()));
+        llm.write_request_summary(&path).unwrap();
+        let summary: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        fs::remove_file(path).unwrap();
+        assert_eq!(summary["responses_without_usage"], 1);
+        assert_eq!(summary["usage_complete"], false);
+    }
+
+    #[tokio::test]
+    async fn rejects_empty_or_malformed_answers_without_retrying() {
+        let mut bodies = Vec::new();
+        let mut empty = completion();
+        empty["choices"] = serde_json::json!([]);
+        bodies.push(empty.to_string());
+        for content in [serde_json::Value::Null, serde_json::json!(" \n ")] {
+            let mut body = completion();
+            body["choices"][0]["message"]["content"] = content;
+            bodies.push(body.to_string());
+        }
+        bodies.push("{invalid JSON".into());
+        for body in bodies {
+            let (llm, server) = mock_replies(vec![(200, body, Duration::ZERO)]).await;
+            assert!(llm.get_answer("test", 1, false).await.is_err());
+            assert_eq!(server.await.unwrap().len(), 1);
+            assert_eq!(llm.stats.lock().unwrap().attempts, 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn permanent_http_errors_do_not_retry() {
+        for status in [400, 401, 403, 404, 422] {
+            let (llm, server) = mock_replies(vec![reply(status)]).await;
+            let error = llm.get_answer("test", 1, false).await.unwrap_err();
+            assert!(error.to_string().contains(&status.to_string()));
+            assert_eq!(server.await.unwrap().len(), 1);
+            assert_eq!(llm.stats.lock().unwrap().attempts, 1);
+        }
+        let body =
+            serde_json::json!({"error": {"message": "no quota", "code": "insufficient_quota"}});
+        let (llm, server) = mock_replies(vec![(429, body.to_string(), Duration::ZERO)]).await;
+        assert!(llm.get_answer("test", 1, false).await.is_err());
+        assert_eq!(server.await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn transient_errors_retry_and_recover_within_three_attempts() {
+        let (llm, server) = mock_replies(vec![reply(429), reply(503), reply(200)]).await;
+        assert_eq!(
+            llm.get_answer("test", 1, false).await.unwrap().0,
+            vec!["local answer"]
+        );
+        assert_eq!(server.await.unwrap().len(), 3);
+        let stats = llm.stats.lock().unwrap();
+        assert_eq!((stats.attempts, stats.failed_attempts), (3, 2));
+    }
+
+    #[tokio::test]
+    async fn a_dropped_connection_is_retried() {
+        let (llm, server) = mock_replies(vec![reply(0), reply(200)]).await;
+        assert!(llm.get_answer("test", 1, false).await.is_ok());
+        assert_eq!(server.await.unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn transient_errors_stop_after_three_attempts() {
+        for status in [429, 500] {
+            let (llm, server) =
+                mock_replies(vec![reply(status), reply(status), reply(status)]).await;
+            assert!(
+                llm.get_answer("test", 1, false)
+                    .await
+                    .unwrap_err()
+                    .to_string()
+                    .contains("attempt 3/3")
+            );
+            assert_eq!(server.await.unwrap().len(), 3);
+            assert_eq!(llm.stats.lock().unwrap().attempts, 3);
+        }
+    }
+
+    #[tokio::test]
+    async fn attempt_timeout_includes_reading_the_body_and_stops_after_three() {
+        let delayed = (200, completion().to_string(), Duration::from_millis(150));
+        let (llm, server) = mock_replies(vec![delayed.clone(), delayed.clone(), delayed]).await;
+        let llm = llm.with_request_timeout(Duration::from_millis(50));
+        let error = llm.get_answer("test", 1, false).await.unwrap_err();
+        assert!(error.to_string().contains("timed out"));
+        assert_eq!(server.await.unwrap().len(), 3);
+        assert_eq!(llm.stats.lock().unwrap().failed_attempts, 3);
     }
 
     #[tokio::test]

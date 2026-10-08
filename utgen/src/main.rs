@@ -2,7 +2,11 @@ use clap::{Args, Parser, Subcommand};
 use log::info;
 use simplelog::{ColorChoice, ConfigBuilder, LevelFilter, TermLogger, TerminalMode};
 use std::path::PathBuf;
-use std::{env, num::NonZeroUsize};
+use std::{
+    env,
+    num::{NonZeroU64, NonZeroUsize},
+    time::Duration,
+};
 use utgen::{LLM, LlmConfig, analyze_project, collect_coverage, validate_repair};
 use utgen::{comment_out_tests, gen_test_rate, gen_tests_project, llm_fix, rename_tests_to_bak};
 
@@ -41,6 +45,9 @@ enum Command {
         /// Maximum active function-generation tasks; compilation stays serial
         #[arg(short, long, default_value = "4")]
         tasks: NonZeroUsize,
+        /// Timeout in seconds for each model request attempt (at most three attempts)
+        #[arg(long, default_value = "180", value_name = "SECONDS")]
+        request_timeout: NonZeroU64,
         /// Whether to generate integration tests
         #[arg(short, long)]
         integration: bool,
@@ -61,6 +68,9 @@ enum Command {
         /// Maximum active function-repair tasks; compilation stays serial
         #[arg(short, long, default_value = "4")]
         tasks: NonZeroUsize,
+        /// Timeout in seconds for each model request attempt (at most three attempts)
+        #[arg(long, default_value = "180", value_name = "SECONDS")]
+        request_timeout: NonZeroU64,
     },
 }
 
@@ -161,12 +171,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::Gen {
             options,
             tasks,
+            request_timeout,
             integration,
             requirement,
             context,
             oracle,
         } => {
-            let llm = LLM::new(LlmConfig::load(cli.config.as_deref())?);
+            let llm = LLM::new(LlmConfig::load(cli.config.as_deref())?)
+                .with_request_timeout(Duration::from_secs(request_timeout.get()));
             let (project_dir, work_dirs) = get_dirs(options)?;
             info!(
                 "Generating tests for project at {}, with work directory(s) {:?}",
@@ -174,38 +186,64 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 work_dirs
             );
 
-            // Generate tests for each work directory
-            for work_dir in work_dirs.iter() {
-                gen_tests_project(
-                    &llm,
-                    &project_dir,
-                    &work_dir,
-                    tasks.get(),
-                    integration,
-                    requirement,
-                    context,
-                    oracle,
-                )
-                .await?;
+            let generated = async {
+                for work_dir in work_dirs.iter() {
+                    gen_tests_project(
+                        &llm,
+                        &project_dir,
+                        &work_dir,
+                        tasks.get(),
+                        integration,
+                        requirement,
+                        context,
+                        oracle,
+                    )
+                    .await?;
+                }
+                Ok::<_, std::io::Error>(())
             }
+            .await;
+            let recorded = if generated.is_ok() || llm.request_count() > 0 {
+                llm.write_request_summary(&project_dir.join("utgen/generation/gen-requests.json"))
+            } else {
+                Ok(())
+            };
+            generated?;
+            recorded?;
             // Collect coverage rate and pass rate for each work directory
             for work_dir in work_dirs.iter() {
                 gen_test_rate(&project_dir, &work_dir, integration, true);
             }
         }
         // fix unit tests
-        Command::Fix { options, tasks } => {
-            let llm = LLM::new(LlmConfig::load(cli.config.as_deref())?);
+        Command::Fix {
+            options,
+            tasks,
+            request_timeout,
+        } => {
+            let llm = LLM::new(LlmConfig::load(cli.config.as_deref())?)
+                .with_request_timeout(Duration::from_secs(request_timeout.get()));
             let (project_dir, work_dirs) = get_dirs(options)?;
             info!(
                 "Fixing tests for project at {}, with work directory(s) {:?}",
                 project_dir.display(),
                 work_dirs
             );
-            for work_dir in work_dirs.iter() {
-                validate_repair(&project_dir, work_dir)?;
-                llm_fix(&llm, project_dir.clone(), work_dir.clone(), tasks.get()).await?;
+            let repaired = async {
+                for work_dir in work_dirs.iter() {
+                    validate_repair(&project_dir, work_dir)?;
+                    llm_fix(&llm, project_dir.clone(), work_dir.clone(), tasks.get()).await?;
+                }
+                Ok::<_, std::io::Error>(())
             }
+            .await;
+            let recorded = if repaired.is_ok() || llm.request_count() > 0 {
+                llm.write_request_summary(&project_dir.join("utgen/generation/fix-requests.json"))
+            } else {
+                Ok(())
+            };
+            repaired?;
+            recorded?;
             //gen_test_rate_aggregated(&project_dir, false);
             for work_dir in work_dirs.iter() {
                 gen_test_rate(&project_dir, &work_dir, false, false);

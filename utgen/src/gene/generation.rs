@@ -183,9 +183,9 @@ async fn gen_tests_cot(
                 for test_info in chain_test_answer.get_tests_mut() {
                     let mut code = common.clone();
                     code.extend(test_info.prefix_func());
-                    let oracle = gen_oracle(llm, &oracle_pt_info, &cond_prompt, &code).await;
-                    if oracle.is_some() {
-                        let (oracles , usage_completion, usage_prompt)= oracle.unwrap();
+                    {
+                        let (oracles, usage_completion, usage_prompt) =
+                            gen_oracle(llm, &oracle_pt_info, &cond_prompt, &code).await?;
                         completion_tokens += usage_completion;
                         prompt_tokens += usage_prompt;
                         let oracles = oracles
@@ -248,9 +248,9 @@ async fn gen_tests_cot(
             for test_info in chain_test_answer.get_tests_mut() {
                 let mut code = common.clone();
                 code.extend(test_info.prefix_func());
-                let oracle = gen_oracle(llm, &oracle_pt_info, &vec![], &code).await;
-                if oracle.is_some() {
-                    let (oracles , usage_completion, usage_prompt) = oracle.unwrap();
+                {
+                    let (oracles, usage_completion, usage_prompt) =
+                        gen_oracle(llm, &oracle_pt_info, &vec![], &code).await?;
                     completion_tokens += usage_completion;
                     prompt_tokens += usage_prompt;
                     let oracles = oracles

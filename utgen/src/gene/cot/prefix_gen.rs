@@ -1,5 +1,5 @@
-use super::Prompt;
 use super::LLM;
+use super::Prompt;
 use super::{extract_test_functions, try_parse};
 use crate::types::{ChainTestAnswer, TestInfo};
 use log::{error, info};
@@ -8,7 +8,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
 use std::path::Path;
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 
 fn postprocess(inputs: &mut Vec<String>) {
     for input in inputs.iter_mut() {
@@ -44,33 +44,16 @@ pub async fn gen_prefix(
             };
             sleep(Duration::from_secs(random_secs)).await;
         }
-        // Net retry
-        let mut net_retry = 0;
-        let mut answers = None;
-        while net_retry < 3 {
-            if net_retry != 0 {
-                let random_secs = {
-                    let mut rng = rand::rng();
-                    rng.random_range(10..=30)
-                };
-                sleep(Duration::from_secs(random_secs)).await;
-            }
-            let result = llm.fetch_answer(Some(&system_pt), &user_pt, 1, false).await;
-            if result.is_ok() {
-                let (result_answers, usage_completion, usage_prompt) = result.unwrap();
-                completion_tokens += usage_completion;
-                prompt_tokens += usage_prompt;
-                answers = Some(result_answers);
-                break;
-            }
-            error!("{}. Retrying...", result.unwrap_err());
-            net_retry += 1;
-        }
-        if answers.is_none() {
-            error!("Failed to fetch answer.");
-            return None;
-        }
-        let mut answers = answers.unwrap();
+        let (mut answers, usage_completion, usage_prompt) =
+            match llm.fetch_answer(Some(system_pt), &user_pt, 1, false).await {
+                Ok(answer) => answer,
+                Err(error) => {
+                    error!("Model request failed: {error}");
+                    return None;
+                }
+            };
+        completion_tokens += usage_completion;
+        prompt_tokens += usage_prompt;
 
         postprocess(&mut answers);
 

@@ -136,14 +136,21 @@ def main():
                     answer = f'ChangeLog:1@{file}\nFixDescription: Use an integer.\nOriginalCode@{number}-{number}:\n[{number}]{old}\nFixedCode@{number}-{number}:\n[{number}]{new}\n'
                 response = {'id': 'fixture', 'object': 'chat.completion', 'created': 0, 'model': 'fixture',
                             'choices': [{'index': 0, 'message': {'role': 'assistant', 'content': answer}, 'finish_reason': 'stop'}]}
-                # Exercise a real worker panic in the existing response parser.
-                if not (state['panic'] and serial == 1):
+                # Valid answers must remain usable when a service omits usage.
+                if not (state['missing_usage'] and serial == 1):
                     response['usage'] = {'prompt_tokens': 1, 'completion_tokens': 1, 'total_tokens': 2}
+                status = 200
+                if ((state['fault'] == 'request' and serial == 1)
+                        or (state['fault'] == 'oracle' and 'generate accurate test oracles' in system
+                            and not state['fault_sent'])):
+                    response = {'error': {'message': 'fixture unauthorized'}}
+                    status = 401
+                    state['fault_sent'] = True
                 body = json.dumps(response).encode()
                 # Count requests awaiting a response, excluding HTTP-handler teardown.
                 with lock:
                     state['active'] -= 1
-                self.send_response(200)
+                self.send_response(status)
                 self.send_header('Content-Type', 'application/json')
                 self.send_header('Content-Length', str(len(body)))
                 self.end_headers()
@@ -157,7 +164,7 @@ def main():
     threading.Thread(target=server.serve_forever, daemon=True).start()
     env.update(PALM_API_BASE=f'http://127.0.0.1:{server.server_port}/v1', PALM_API_KEY='fixture', PALM_MODEL='fixture')
 
-    def run(label, command, limit=1, integration=False, panic=False, fail=False, backpressure=False):
+    def run(label, command, limit=1, integration=False, missing_usage=False, fault=None, fail=False, backpressure=False):
         monitor = work / label
         monitor.mkdir()
         (monitor / 'compiler.json').write_text(json.dumps(dict(active=0, peak=0, total=0, source_changes=0)))
@@ -165,7 +172,7 @@ def main():
         env.pop('PALM_HOLD_FIRST_BUILD', None)
         with lock:
             state.clear()
-            state.update(active=0, peak=0, total=0, errors=[], limit=limit, integration=integration, panic=panic)
+            state.update(active=0, peak=0, total=0, errors=[], limit=limit, integration=integration, missing_usage=missing_usage, fault=fault, fault_sent=False)
         ready.clear()
         watcher = None
         if backpressure:
@@ -209,6 +216,11 @@ def main():
         assert (root / 'src/lib.rs').read_text() == original, label
         assert (root / 'src/unrelated.rs').read_text() == '// unrelated source file\n', label
         assert unrelated.read_bytes() == b'previous recovery material\n', label
+        if command[1] in ['gen', 'fix'] and state['total']:
+            report = json.loads((root / f'utgen/generation/{command[1]}-requests.json').read_text())
+            assert report['attempts'] == state['total'], report
+            assert report['responses_without_usage'] == int(missing_usage), report
+            assert report['usage_complete'] == (not missing_usage and not state['fault_sent']), report
         return state.copy()
 
     def reset(seed=None):
@@ -233,15 +245,19 @@ def main():
         seed = work / 'broken-candidates'
         for n in [1, 2, 4]:
             reset()
-            measured = run(f'gen-{n}', command('gen', n), limit=n, backpressure=n == 1)
+            measured = run(f'gen-{n}', command('gen', n), limit=n, missing_usage=n == 1, backpressure=n == 1)
             assert measured['total'] == count and measured['peak'] == n, measured
             results('result', 0)
             assert not (root / 'src/lib.rs.bak').exists()
             if n == 1:
                 shutil.copytree(root / 'utgen/generation/pre_fix', seed)
+                measured = run('gen-cached', command('gen', 1))
+                assert measured['total'] == 0
+                report = json.loads((root / 'utgen/generation/gen-requests.json').read_text())
+                assert report['attempts'] == 0 and report['usage_complete'], report
         for n in [1, 2, 4]:
             reset(seed)
-            measured = run(f'fix-{n}', command('fix', n), limit=n)
+            measured = run(f'fix-{n}', command('fix', n), limit=n, missing_usage=n == 1)
             assert measured['total'] == count and measured['peak'] == n, measured
             results('fixed_result', 1)
             assert not (root / 'src/lib.rs.bak').exists()
@@ -269,7 +285,7 @@ def main():
                     assert not path.exists(), path
         for mode in ['gen', 'fix']:
             reset(seed if mode == 'fix' else None)
-            measured = run(f'{mode}-panic', command(mode, 1), panic=True, fail=True)
+            measured = run(f'{mode}-request-error', command(mode, 1), fault='request', fail=True)
             assert measured['total'] == count, measured  # Remaining workers still finish.
             assert not (root / 'utgen' / ('result' if mode == 'gen' else 'fixed_result')).exists()
             if mode == 'fix':
@@ -281,6 +297,19 @@ def main():
                 assert measured['total'] == 0
                 assert backup.read_bytes() == b'old recovery material\n'
                 backup.unlink()
+        reset()
+        measured = run('oracle-request-error', command('gen', 1, '--integration', '--oracle'),
+                       integration=True, fault='oracle', fail=True)
+        assert measured['total'] == count * 3 and measured['fault_sent']
+        assert not (root / 'utgen/result').exists()
+        reset()
+        encoded = next(iter(json.loads((root / 'brinfo/name_map.json').read_text()).values()))
+        blocker = root / 'utgen/generation/prompt' / encoded
+        blocker.parent.mkdir(parents=True)
+        blocker.write_text('not a directory')
+        measured = run('gen-worker-panic', command('gen', 1), fail=True)
+        assert measured['total'] == count - 1
+        assert not (root / 'utgen/result').exists()
         # A consumer failure must still drain the queue and let every sender finish.
         reset()
         backup = root / 'src/lib.rs.bak'

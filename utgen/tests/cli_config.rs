@@ -94,6 +94,30 @@ fn tasks_default_to_four_and_reject_zero_before_loading_configuration() {
 }
 
 #[test]
+fn request_timeout_rejects_zero_before_loading_configuration() {
+    let fixture = Fixture::new();
+    for command in ["gen", "fix"] {
+        let help = fixture
+            .command()
+            .args([command, "--help"])
+            .output()
+            .unwrap();
+        assert!(String::from_utf8_lossy(&help.stdout).contains("[default: 180]"));
+        let output = fixture
+            .command()
+            .args([command, "-p", ".", "--request-timeout", "0"])
+            .env("PALM_CONFIG", "missing.json")
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(error.contains("--request-timeout"), "{error}");
+        assert!(!error.contains("Cannot read"), "{error}");
+        assert!(!fixture.0.join("utgen").exists());
+    }
+}
+
+#[test]
 fn analyze_validates_the_crate_without_loading_model_configuration() {
     let fixture = Fixture::new();
     let output = fixture
