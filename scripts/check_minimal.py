@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import subprocess
 import tempfile
 import threading
@@ -78,10 +79,19 @@ def main():
         shutil.copytree(REPO / 'examples/minimal', copy,
                         ignore=shutil.ignore_patterns('target', 'brinfo', 'focxt', 'utgen', 'tests.bak'))
 
-    def run(label, command, cwd=target, expected=0):
+    def run(label, command, cwd=target, expected=0, timeout=240):
         print(label, flush=True)
-        result = subprocess.run(command, cwd=cwd, env=env, capture_output=True, text=True, timeout=240)
         log = logs / (label + '.log')
+        process = subprocess.Popen(command, cwd=cwd, env=env, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, text=True, start_new_session=True)
+        try:
+            stdout, stderr = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            stdout, stderr = process.communicate()
+            log.write_text(stdout + stderr)
+            raise AssertionError(f'{label}: timeout; see {log}')
+        result = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
         log.write_text(result.stdout + result.stderr)
         assert (result.returncode == 0) == (expected == 0), f'{label}: exit {result.returncode}; see {log}\n{(result.stdout + result.stderr)[-12000:]}'
         return result
@@ -269,6 +279,51 @@ def main():
         double = json.loads((target / f"utgen/result/{names['palm_fixture::nested::double']}.json").read_text())
         assert double['tests_compiled'] == 0 and double['tests'] == 1, double
         assert not list((target / 'src').rglob('*.bak'))
+
+        # Replay cached candidates on one function: ordinary and should_panic
+        # loops must fail, and later passing tests must still execute.
+        selected = 'palm_fixture::classify'
+        selection = work / 'timeout-function.txt'
+        selection.write_text(selected + '\n')
+        candidate = target / f'utgen/generation/pre_fix/{names[selected]}.json'
+        data = json.loads(candidate.read_text())
+        data['fn_tests'] = data['fn_tests'][:1]
+        answer = data['fn_tests'][0]['answers'][0]
+        answer['chain_tests'] = [
+            dict(attrs=attrs, prefix=[], oracles=[], codes=[['{', body, '}']],
+                 can_compile=[{'Ok': None}], repaired=[False])
+            for attrs, body in [
+                ([], 'assert_eq!(classify(2), 1); loop { std::hint::spin_loop(); }'),
+                (['#[should_panic]'], 'loop { std::hint::spin_loop(); }'),
+                (['#[should_panic(expected = "expected")]'], 'panic!("expected");'),
+                ([], 'assert_eq!(classify(-1), 0);'),
+            ]
+        ]
+        candidate.write_text(json.dumps(data, indent=2) + '\n')
+        # Keep original-test coverage separate when switching this fixture to
+        # integration mode, which creates its own tests directory.
+        original_tests = work / 'timeout-original-tests'
+        shutil.move(target / 'tests.bak', original_tests)
+        timeout_prepared = snapshot(target)
+        requests_before = (state['generation'], state['repair'])
+        for integration in [False, True]:
+            run(f'candidate-timeouts-{integration}',
+                ['utgen', 'gen', '-p', str(target), '--functions-file', str(selection),
+                 *(['--integration'] if integration else [])], timeout=90)
+            result = json.loads((target / f'utgen/result/{names[selected]}.json').read_text())
+            assert result['tests'] == result['tests_compiled'] == result['tests_run'] == 4, result
+            assert result['tests_passed'] == 2, result
+            assert result['branches_covered'] == result['branches'] == 2, result
+            if integration:
+                assert not (target / 'tests.bak2').exists()
+                shutil.rmtree(target / 'tests')
+            assert snapshot(target) == timeout_prepared
+            assert not list((target / 'src').rglob('*.bak'))
+            assert (state['generation'], state['repair']) == requests_before, state
+            report = json.loads((target / 'utgen/generation/gen-requests.json').read_text())
+            assert report['attempts'] == 0, report
+        shutil.move(original_tests, target / 'tests.bak')
+        assert snapshot(target) == prepared
         (work / 'summary.json').write_text(json.dumps(state, indent=2) + '\n')
         print('Minimal analysis/generation/repair/coverage checks passed.', flush=True)
     finally:
