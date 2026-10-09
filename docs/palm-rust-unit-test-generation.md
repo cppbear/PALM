@@ -422,7 +422,7 @@ export PALM_CONFIG="$(pwd)/utgen/res/api.json"
 | `coverage.xml` | `cargo llvm-cov` Cobertura 中间输出，位于目标 work dir，解析后可能被删除。 |
 | `coverage.json` | `cargo llvm-cov` JSON 中间输出，位于目标 work dir，解析后可能被删除。 |
 
-最终统计以 `utgen/result/` 和 `utgen/fixed_result/` 中的 JSON 为准；当前实现不生成 HTML 报告。
+最终统计以 `utgen/result/` 和 `utgen/fixed_result/` 中的 JSON 为准；当前实现不生成 HTML 报告。`coverage_available=false` 表示没有取得被测函数的覆盖映射，覆盖数值仅为占位，不应参与汇总，也不能直接解释为条件编译排除了函数。旧结果缺少该字段时，其可用性未确认。`tests_*` 按候选计数，`oracles_*` 按原有 TestInfo 分组计数；一组中有候选通过，该组即计为通过。运行数保留包含 ignored 条目的既有口径。
 
 ### 8.7 LLM 修复流程
 

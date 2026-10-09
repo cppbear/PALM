@@ -162,6 +162,8 @@ pub struct TestRateInfo {
     pub tests_run: i32,
     pub tests_passed: i32,
     pub tests_passed_rate: f64,
+    #[serde(default)]
+    pub coverage_available: bool,
     pub lines: i32,
     pub lines_covered: i32,
     pub lines_coveraged_rate: f64,
@@ -219,10 +221,11 @@ impl TestRateInfo {
                 }
             }
         }
+        self.coverage_available = lines > 0 || !codes_branches_covered.is_empty();
         branches = if codes_branches_covered.len() > 0 {
             2 * codes_branches_covered.len() as i32
         } else {
-            1
+            i32::from(self.coverage_available)
         };
         branches_covered = if codes_branches_covered.len() > 0 {
             let mut temp_branches_covered = 0;
@@ -368,14 +371,19 @@ pub fn gen_test_rate(
         }
         let targets = integration_infos
             .iter()
+            .filter(|info| info.tests_compiled > 0)
             .map(|info| info.file_name.clone())
             .collect::<Vec<_>>();
-        let output = super::coverage::collect_coverage_for_tests(work_dir, true, &targets)
-            .expect("Failed to collect integration coverage");
-        let test_output = String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .map(str::to_owned)
-            .collect::<Vec<_>>();
+        let test_output = if targets.is_empty() {
+            Vec::new()
+        } else {
+            let output = super::coverage::collect_coverage_for_tests(work_dir, true, &targets)
+                .expect("Failed to collect integration coverage");
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .map(str::to_owned)
+                .collect()
+        };
         let end_time = SystemTime::now();
         let test_time = end_time.duration_since(start_time).unwrap().as_secs_f64();
         for integration_info in integration_infos.iter() {
@@ -401,6 +409,7 @@ pub fn gen_test_rate(
                         tests_run: 0,
                         tests_passed: 0,
                         tests_passed_rate: 0.0,
+                        coverage_available: false,
                         lines: 0,
                         lines_covered: 0,
                         lines_coveraged_rate: 0.0,
@@ -418,62 +427,53 @@ pub fn gen_test_rate(
                     let file_path = project_dir.join(&file_rela);
                     let begin = loc.get_startline() as i32;
                     let end = loc.get_endline() as i32;
-                    gen_one_coverage_rate_lines(
-                        project_dir,
-                        work_dir,
-                        &function_name,
-                        &file_path,
-                        begin,
-                        end,
-                        &mut test_rate_info,
-                    );
-                    gen_one_coverage_rate_branches(
-                        project_dir,
-                        work_dir,
-                        &function_name,
-                        &file_path,
-                        begin,
-                        end,
-                        &mut test_rate_info,
-                    );
+                    if !targets.is_empty() {
+                        gen_one_coverage_rate_lines(
+                            project_dir,
+                            work_dir,
+                            &function_name,
+                            &file_path,
+                            begin,
+                            end,
+                            &mut test_rate_info,
+                        );
+                        gen_one_coverage_rate_branches(
+                            project_dir,
+                            work_dir,
+                            &function_name,
+                            &file_path,
+                            begin,
+                            end,
+                            &mut test_rate_info,
+                        );
+                    }
                     test_rate_infos.push(test_rate_info);
                     break;
                 }
             }
         }
         // Every integration function reads the same coverage run.
-        fs::remove_file(work_dir.join("coverage.xml")).unwrap();
-        fs::remove_file(work_dir.join("coverage.json")).unwrap();
-        for integration_info in integration_infos.iter() {
-            let mut tests = integration_info.test_function_names.len() as i32;
-            let mut passed_tests = 0;
-            for test_function_name in integration_info.test_function_names.iter() {
-                for line in test_output.iter() {
-                    if line.contains(test_function_name) {
-                        info!("Generate pass rate for {}", test_function_name);
-                        let line_spilit = line
-                            .split(" ... ")
-                            .map(|line| line.to_string())
-                            .collect::<Vec<String>>();
-                        if line_spilit[1] == "ok" {
-                            passed_tests = passed_tests + 1;
-                        }
-                        break;
-                    }
-                }
-            }
-            for already_test_rate_info in test_rate_infos.iter_mut() {
-                if already_test_rate_info.function_name == integration_info.function_name {
-                    already_test_rate_info.tests_run = tests;
-                    already_test_rate_info.tests_passed = passed_tests;
-                    already_test_rate_info.tests_passed_rate = if tests > 0 {
-                        passed_tests as f64 / tests as f64 * 100.0
-                    } else {
-                        0.0
-                    };
-                    break;
-                }
-            }
+        if !targets.is_empty() {
+            fs::remove_file(work_dir.join("coverage.xml")).unwrap();
+            fs::remove_file(work_dir.join("coverage.json")).unwrap();
+        }
+        for (info, rate) in integration_infos.iter().zip(&mut test_rate_infos) {
+            let (tests_run, tests_passed, oracles_run, oracles_passed) =
+                info.execution_counts(&test_output);
+            rate.tests_run = tests_run;
+            rate.tests_passed = tests_passed;
+            rate.oracles_run = oracles_run;
+            rate.oracles_passed = oracles_passed;
+            rate.tests_passed_rate = if tests_run > 0 {
+                tests_passed as f64 / tests_run as f64 * 100.0
+            } else {
+                0.0
+            };
+            rate.oracles_passed_rate = if oracles_run > 0 {
+                oracles_passed as f64 / oracles_run as f64 * 100.0
+            } else {
+                0.0
+            };
         }
         // let _ = target_clean(work_dir);
         gen_codes_lines_and_branches_covered(
@@ -497,7 +497,9 @@ pub fn gen_test_rate(
         if is_pre {
             gen_coverage_rate_for_original_tests(project_dir, work_dir, &test_gen_infos);
         }
-        generated_tests.finish().expect("cannot restore generated tests");
+        generated_tests
+            .finish()
+            .expect("cannot restore generated tests");
     }
 }
 
@@ -630,6 +632,7 @@ fn gen_one_coverage_rate_lines(
         //     0.0
         // };
 
+        test_rate_info.coverage_available = lines > 0;
         test_rate_info.lines = lines;
         test_rate_info.lines_covered = lines_covered;
         test_rate_info.lines_coveraged_rate = lines_coverage_rate;
@@ -700,6 +703,7 @@ fn gen_one_coverage_rate_branches(
     let mut branches_covered = 0;
     let mut branches_coverage_rate = 0.0;
 
+    test_rate_info.coverage_available |= !codes_branches.is_empty();
     if codes_branches.len() > 0 {
         branches = 2 * codes_branches.len() as i32;
         for codes_branch in codes_branches.iter() {
@@ -716,7 +720,7 @@ fn gen_one_coverage_rate_branches(
             0.0
         };
     } else {
-        branches = 1;
+        branches = i32::from(test_rate_info.coverage_available);
         if test_rate_info.lines_covered > 0 {
             branches_covered = 1;
         }
@@ -815,6 +819,7 @@ fn gen_coverage_and_pass_rate(
             tests_run: 0,
             tests_passed: 0,
             tests_passed_rate: 0.0,
+            coverage_available: false,
             lines: 0,
             lines_covered: 0,
             lines_coveraged_rate: 0.0,
