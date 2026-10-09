@@ -41,6 +41,7 @@ The default binary directory is `target/debug`. The coverage tool must be availa
 | Coverage | Excludes test bodies and test-only helpers, preserves production coverage, and executes tests once when exporting XML and JSON. |
 | Cleanup | Restores sources after the covered success, assertion-failure, compilation-failure, and report-export-failure cases. |
 | Candidate timeout | Ordinary and `should_panic` infinite loops count as failures; an expected panic and a later ordinary test pass in unit and integration statistics. |
+| Statistics | Oracle groups count once across multiple candidates; pass results match complete test names; an all-compilation-failure result reports unavailable coverage without exporting an empty run. |
 | Integration repair | Repairs alias/trait imports, helpers, and test bodies in integration targets; keeps sibling candidates independent; checks cached repair, mode mismatch, unselected targets, and cleanup after request failure. |
 | Integration directories | Original and generated tests coexist after normal runs and cached reruns; original-test compilation failure restores both directories; an existing staging directory is preserved and reported. |
 

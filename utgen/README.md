@@ -216,6 +216,10 @@ Paths under `utgen/` below are relative to `--project-dir`:
 | `utgen/fixed_result/` | Post-repair coverage and execution statistics per focal function. |
 | `utgen/original_result.json` | Comparison statistics when the original integration-test backup is available. |
 
+Per-function results include `coverage_available`. When it is false, the numeric coverage fields are placeholders and must not enter coverage aggregates; report the number of unavailable functions separately. Missing mappings are not assumed to mean `cfg(test)` exclusion. Old results without this field have unconfirmed availability. Candidate/compilation statistics remain valid when no candidate compiles.
+
+`tests_*` count candidates; `oracles_*` count the existing `TestInfo` groups. A group counts once if any of its candidates compiles, is registered to run, or passes, respectively. Run counts retain the existing libtest convention, including ignored tests. Integration pass outcomes match complete test names.
+
 `coverage.xml`, `coverage.json`, and `error_output.json` are intermediate files in the work directory and may be deleted after generation/repair parses them. The standalone `coverage` command retains both reports. The current implementation does not produce an HTML report.
 
 See the [deterministic minimal pipeline](../docs/minimal-pipeline.md) and the [bytes example](../examples/README.md) for a working-copy workflow and the [Chinese technical guide](../docs/palm-rust-unit-test-generation.md) for implementation details.

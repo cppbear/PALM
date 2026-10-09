@@ -356,6 +356,8 @@ fn body_case() {
             result = json.loads((target / f'utgen/result/{names[selected]}.json').read_text())
             assert result['tests'] == result['tests_compiled'] == result['tests_run'] == 4, result
             assert result['tests_passed'] == 2, result
+            assert result['oracles_run'] == 4 and result['oracles_passed'] == 2, result
+            assert result['coverage_available'], result
             assert result['branches_covered'] == result['branches'] == 2, result
             if integration:
                 assert not (target / 'tests.bak2').exists()
@@ -366,6 +368,38 @@ fn body_case() {
             report = json.loads((target / 'utgen/generation/gen-requests.json').read_text())
             assert report['attempts'] == 0, report
         shutil.move(original_tests, target / 'tests.bak')
+        assert snapshot(target) == prepared
+
+        # Multiple candidates belong to one oracle; all failed compilation is
+        # still a valid result and must not attempt to export empty coverage.
+        data['integration'] = True
+        answer['common'] = []
+        answer['chain_tests'] = [dict(
+            attrs=[], prefix=[], oracles=[],
+            codes=[['{', 'assert_eq!(classify(2), 1);', '}'],
+                   ['{', 'assert_eq!(classify(-1), 1);', '}']],
+            can_compile=[{'Ok': None}, {'Ok': None}], repaired=[False, False])]
+        candidate.write_text(json.dumps(data))
+        command = ['utgen', 'gen', '-p', str(target), '--functions-file', str(selection), '--integration']
+        run('integration-oracle-group', command)
+        result = json.loads((target / f'utgen/result/{names[selected]}.json').read_text())
+        assert (result['tests_run'], result['tests_passed']) == (2, 1), result
+        assert (result['oracles'], result['oracles_compiled'], result['oracles_run'], result['oracles_passed']) == (1, 1, 1, 1), result
+        assert result['oracles_passed_rate'] == 100.0 and result['coverage_available'], result
+        test = answer['chain_tests'][0]
+        test['codes'] = [['{', 'missing();', '}']]
+        test['can_compile'] = [{'Err': 'fixture compile failure'}]
+        test['repaired'] = [False]
+        candidate.write_text(json.dumps(data))
+        run('integration-no-compiled-candidates', command)
+        result = json.loads((target / f'utgen/result/{names[selected]}.json').read_text())
+        assert result['tests'] == result['oracles'] == 1, result
+        assert result['tests_compiled'] == result['tests_run'] == result['tests_passed'] == 0, result
+        assert result['oracles_compiled'] == result['oracles_run'] == result['oracles_passed'] == 0, result
+        assert not result['coverage_available'], result
+        assert result['lines'] == result['branches'] == 0, result
+        assert result['codes_lines_covered'] == [], result
+        shutil.rmtree(target / 'tests')
         assert snapshot(target) == prepared
 
         # Original and generated integration tests must coexist, including on
@@ -460,7 +494,8 @@ fn body_case() {
             result = json.loads((target / f'utgen/fixed_result/{names[name]}.json').read_text())
             assert result['tests'] == result['tests_compiled'] == result['tests_run'] == result['tests_passed'] == count, result
             assert len(result['codes_lines_covered']) == count, result
-            assert result['lines_covered'] > 0, result
+            assert result['lines_covered'] > 0 and result['coverage_available'], result
+            assert result['oracles_run'] == result['oracles_passed'] == count, result
         fixed_path = target / f'utgen/generation/llm_fix/{names[selected]}.json'
         fixed = json.loads(fixed_path.read_text())
         tests = fixed['fn_tests'][0]['answers'][0]['chain_tests']

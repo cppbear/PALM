@@ -168,7 +168,7 @@ pub(crate) fn repaired_candidate(
 pub struct IntegrationInfo {
     pub function_name: String,
     pub file_name: String,
-    pub test_function_names: Vec<String>,
+    pub test_functions: Vec<(String, usize)>, // (complete libtest name, oracle group)
     pub tests: i32,
     pub tests_lines: Vec<i32>,
     pub oracles: i32,
@@ -179,11 +179,39 @@ pub struct IntegrationInfo {
 }
 
 impl IntegrationInfo {
+    /// Keep the existing run-count convention (registered tests, including ignored).
+    /// Count a group once if any of its candidates was registered/passed.
+    pub fn execution_counts(&self, output: &[String]) -> (i32, i32, i32, i32) {
+        let passed: HashSet<_> = output
+            .iter()
+            .filter_map(|line| {
+                let (name, outcome) = line.strip_prefix("test ")?.split_once(" ... ")?;
+                (outcome == "ok").then_some(name)
+            })
+            .collect();
+        let mut run_groups = BTreeSet::new();
+        let mut passed_groups = BTreeSet::new();
+        let mut passed_tests = 0;
+        for (name, group) in &self.test_functions {
+            run_groups.insert(group);
+            if passed.contains(name.as_str()) {
+                passed_tests += 1;
+                passed_groups.insert(group);
+            }
+        }
+        (
+            self.test_functions.len() as i32,
+            passed_tests,
+            run_groups.len() as i32,
+            passed_groups.len() as i32,
+        )
+    }
+
     fn new() -> Self {
         IntegrationInfo {
             function_name: String::new(),
             file_name: String::new(),
-            test_function_names: Vec::new(),
+            test_functions: Vec::new(),
             tests: 0,
             tests_lines: Vec::new(),
             oracles: 0,
@@ -234,7 +262,7 @@ pub fn gen_integration(test_gen_infos: &Vec<TestGenInfo>, work_dir: &Path) -> Ve
                                 &test_name,
                                 true,
                             ));
-                            result.test_function_names.push(test_name);
+                            result.test_functions.push((format!("candidate_{id}::{test_name}"), result.oracles as usize - 1));
                             result.tests_compiled += 1;
                         }
                     }
@@ -261,6 +289,28 @@ pub fn gen_integration(test_gen_infos: &Vec<TestGenInfo>, work_dir: &Path) -> Ve
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn execution_counts_use_complete_names_and_distinct_oracle_groups() {
+        let mut info = IntegrationInfo::new();
+        info.test_functions = vec![
+            ("candidate_10::test_10".into(), 0),
+            ("candidate_100::test_100".into(), 0),
+            ("candidate_2::test_2".into(), 1),
+        ];
+        let output = [
+            "test candidate_100::test_100 ... ok",
+            "test candidate_10::test_10 ... FAILED",
+            "test candidate_2::test_2 ... ignored",
+            "test unrelated::test_10 ... ok",
+        ]
+        .map(str::to_owned);
+        assert_eq!(info.execution_counts(&output), (3, 1, 2, 1));
+        assert_eq!(
+            IntegrationInfo::new().execution_counts(&output),
+            (0, 0, 0, 0)
+        );
+    }
 
     #[test]
     fn repair_cannot_disable_the_candidate_to_hide_a_compile_error() {
