@@ -25,7 +25,7 @@ PALM 的思路是把程序分析纳入提示词构建过程：先用 Rust 编译
 4. 测试生成与修复：`utgen` 调用 LLM 生成候选，按所属 Cargo 目标检查编译；单元模式临时插入源码，集成模式写入临时测试目标。编译错误用于驱动 LLM 修复，测试执行和覆盖率采集在后续阶段完成。
 
 ```mermaid
-flowchart LR
+flowchart TD
     A["目标 Rust crate"] --> B["brinfo: HIR/MIR + CFG"]
     B --> C["brinfo/brdata/*.json 条件链"]
     A --> D["focxt/call_chain: 调用和类型依赖"]

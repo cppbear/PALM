@@ -18,7 +18,7 @@ This is the maintained implementation of ***PALM: Synergizing Program Analysis a
 ## How it works
 
 ```mermaid
-flowchart LR
+flowchart TD
     A["Rust package"] --> B["Path constraints and code context"]
     B --> C["Model-generated tests"]
     C --> D["Compilation check"]
