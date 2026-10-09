@@ -1,0 +1,73 @@
+name: Project website
+
+on:
+  push:
+    branches: [main]
+    paths: ["site/**", ".github/workflows/pages.yml"]
+  pull_request:
+    paths: ["site/**", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check static assets and fragment links
+        run: |
+          python3 - <<'PY'
+          from html.parser import HTMLParser
+          from pathlib import Path
+          from urllib.parse import urlsplit
+
+          root = Path('site')
+          class Page(HTMLParser):
+              def __init__(self):
+                  super().__init__()
+                  self.ids, self.urls = set(), []
+              def handle_starttag(self, tag, attrs):
+                  attrs = dict(attrs)
+                  if 'id' in attrs:
+                      assert attrs['id'] not in self.ids, f"Duplicate ID: {attrs['id']}"
+                      self.ids.add(attrs['id'])
+                  self.urls.extend(attrs[key] for key in ('src', 'href') if key in attrs)
+
+          page = Page()
+          page.feed((root / 'index.html').read_text())
+          for url in page.urls:
+              parts = urlsplit(url)
+              if parts.scheme or parts.netloc:
+                  continue
+              if parts.path:
+                  assert (root / parts.path).exists(), f'Missing asset: {url}'
+              elif parts.fragment:
+                  assert parts.fragment in page.ids, f'Missing fragment: {url}'
+          print('Static assets and fragment links passed.')
+          PY
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+  deploy:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

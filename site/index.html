@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="PALM combines program analysis and language models to generate, compile-check, and evaluate Rust tests. Explore the workflow and try the offline example."
+    />
+    <meta name="theme-color" content="#f7f7fc" />
+    <title>PALM — Rust tests, guided by program analysis</title>
+    <link rel="icon" href="./assets/mark.svg" type="image/svg+xml" />
+    <link
+      rel="preload"
+      href="./assets/sora-semibold.ttf"
+      as="font"
+      type="font/ttf"
+      crossorigin
+    />
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="./main.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header wrap">
+      <a class="wordmark" href="./" aria-label="PALM home"
+        ><img src="./assets/mark.svg" width="34" height="34" alt="" />PALM</a
+      >
+      <nav aria-label="Main navigation">
+        <a href="#how-it-works">How it works</a>
+        <a href="https://github.com/cppbear/PALM/tree/main/docs">Docs</a>
+        <a href="https://github.com/cppbear/PALM"
+          >GitHub
+          <svg class="arrow" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M6 18 18 6M6 6h12v12" /></svg
+        ></a>
+      </nav>
+    </header>
+    <main id="main">
+      <section class="hero wrap" aria-labelledby="hero-title">
+        <h1 id="hero-title">
+          Rust tests.<br />Grounded in <span>your code.</span>
+        </h1>
+        <div class="hero-intro">
+          <p>
+            PALM combines program analysis with language models to turn path
+            constraints and code context into test candidates.
+          </p>
+          <a class="button primary" href="#get-started"
+            >Try the offline example
+            <svg class="arrow" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M5 12h14m-6-6 6 6-6 6" /></svg
+          ></a>
+        </div>
+        <div class="path-demo" aria-labelledby="demo-title">
+          <div class="demo-heading">
+            <h2 id="demo-title">One function. Two paths to test.</h2>
+            <a href="https://github.com/cppbear/PALM/tree/main/examples/minimal"
+              >Explore the fixture
+              <svg class="arrow" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M6 18 18 6M6 6h12v12" /></svg
+            ></a>
+          </div>
+          <div class="demo-body">
+            <div class="source">
+              <div class="source-caption">
+                Rust source <span>classify(value)</span>
+              </div>
+              <pre><code><span class="code-keyword">pub fn</span> classify(value: <span class="code-type">i32</span>) -&gt; <span class="code-type">i32</span> {
+    <span class="code-keyword">if</span> support::positive(value) {
+<span class="code-line selected" id="positive-line">        1</span>
+    } <span class="code-keyword">else</span> {
+<span class="code-line" id="nonpositive-line">        0</span>
+    }
+}</code></pre>
+              <p class="source-note">
+                <code>support::positive</code> checks <code>value &gt; 0</code>.
+              </p>
+            </div>
+            <div class="trace">
+              <fieldset id="path-controls" hidden>
+                <legend>Follow an input</legend>
+                <div class="input-options">
+                  <label
+                    ><input
+                      type="radio"
+                      name="path"
+                      value="positive"
+                      checked
+                    /><span>value = 2</span></label
+                  >
+                  <label
+                    ><input type="radio" name="path" value="nonpositive" /><span
+                      >value = −1</span
+                    ></label
+                  >
+                </div>
+              </fieldset>
+              <noscript
+                ><p>
+                  Example input: <code>value = 2</code>. Enable JavaScript to
+                  switch paths.
+                </p></noscript
+              >
+              <div class="route-result" aria-live="polite" aria-atomic="true">
+                <div class="route-step">
+                  <span class="route-dot" aria-hidden="true"></span>
+                  <div>
+                    <span class="route-label">Path condition</span
+                    ><code id="path-condition">value &gt; 0</code>
+                  </div>
+                </div>
+                <div class="route-step">
+                  <span class="route-dot end" aria-hidden="true"></span>
+                  <div>
+                    <span class="route-label">Example assertion</span
+                    ><code id="path-assertion"
+                      >assert_eq!(classify(2), 1);</code
+                    >
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <p class="demo-note">
+            Interactive illustration of the minimal fixture. Its offline check
+            uses fixed local model responses; this page does not run Rust or
+            call a model.
+          </p>
+        </div>
+        <div class="hero-foot">
+          <span>Open source · MIT licensed</span
+          ><a href="https://doi.org/10.1109/ASE63991.2025.00223"
+            >Read the ASE 2025 paper
+            <svg class="arrow" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M6 18 18 6M6 6h12v12" /></svg
+          ></a>
+        </div>
+      </section>
+
+      <section
+        class="workflow wrap section"
+        id="how-it-works"
+        aria-labelledby="workflow-title"
+      >
+        <div class="section-intro">
+          <h2 id="workflow-title">
+            Give the model<br />more than a signature.
+          </h2>
+          <p>
+            PALM brings the function’s paths and dependencies into the prompt,
+            then checks the generated tests with the Rust toolchain.
+          </p>
+        </div>
+        <ol class="workflow-steps">
+          <li>
+            <span class="step-index" aria-hidden="true">1</span>
+            <h3>Analyze the code</h3>
+            <p>
+              Extract representative path constraints, calls, and type
+              dependencies for the focal function.
+            </p>
+            <a href="https://github.com/cppbear/PALM/blob/main/focxt/README.md"
+              >Explore code context</a
+            >
+          </li>
+          <li>
+            <span class="step-index" aria-hidden="true">2</span>
+            <h3>Generate &amp; repair</h3>
+            <p>
+              Generate candidates with a language model. Use compiler
+              diagnostics to repair compilation errors.
+            </p>
+            <a href="https://github.com/cppbear/PALM/blob/main/utgen/README.md"
+              >Explore the CLI</a
+            >
+          </li>
+          <li>
+            <span class="step-index" aria-hidden="true">3</span>
+            <h3>Run &amp; measure</h3>
+            <p>
+              Inspect compilation, execution, and coverage per function, with
+              test code excluded from coverage.
+            </p>
+            <a
+              href="https://github.com/cppbear/PALM/blob/main/docs/minimal-pipeline.md#outputs-and-coverage-interpretation"
+              >Understand the results</a
+            >
+          </li>
+        </ol>
+        <p class="workflow-note">
+          Repair addresses compilation errors. Assertion failures and candidate
+          timeouts remain failed test outcomes.
+        </p>
+      </section>
+
+      <section
+        class="start-section"
+        id="get-started"
+        aria-labelledby="start-title"
+      >
+        <div class="wrap start-grid">
+          <div>
+            <h2 id="start-title">Start small.<br />See the whole pipeline.</h2>
+            <p>
+              The minimal example checks analysis, generation, compilation
+              repair, execution, coverage, and source restoration. No model
+              credentials needed.
+            </p>
+            <p class="prerequisites">
+              First install the
+              <a href="https://github.com/cppbear/PALM#prerequisites"
+                >prerequisites</a
+              >: Git, Rust and a C linker, Python 3.9+, the pinned nightly, and
+              cargo-llvm-cov. Downloads may need network access.
+            </p>
+          </div>
+          <div class="terminal">
+            <div class="terminal-heading">
+              <span>Run from your terminal</span
+              ><button
+                class="copy-button"
+                type="button"
+                data-copy="quickstart-code"
+                hidden
+              >
+                Copy commands
+              </button>
+            </div>
+            <pre><code id="quickstart-code">git clone https://github.com/cppbear/PALM.git
+cd PALM
+cargo build --workspace --locked
+python3 scripts/check_minimal.py</code></pre>
+            <p class="expected">Expected completion</p>
+            <p class="terminal-result">
+              Minimal analysis/generation/repair/coverage checks passed.
+            </p>
+            <p class="copy-status" id="copy-status" role="status"></p>
+          </div>
+          <div class="next-step">
+            <h3>Ready for your own package?</h3>
+            <p>
+              Install the tools, configure a model, and begin with a small
+              function list and request budget. Preprocessing changes source and
+              tests, so use a fresh working copy.
+            </p>
+            <a
+              class="button secondary"
+              href="https://github.com/cppbear/PALM/blob/main/examples/README.md"
+              >Follow a bounded example
+              <svg class="arrow" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5 12h14m-6-6 6 6-6 6" /></svg
+            ></a>
+          </div>
+        </div>
+      </section>
+
+      <section class="scope wrap section" aria-labelledby="scope-title">
+        <div class="section-intro">
+          <h2 id="scope-title">Know where it fits.</h2>
+          <p>
+            Start with one standalone Cargo package and a few functions. Expand
+            after checking the results.
+          </p>
+        </div>
+        <dl class="scope-list">
+          <div>
+            <dt>Unit &amp; integration tests</dt>
+            <dd>
+              Unit tests use the recorded library or binary target.
+              Function-level integration tests require a library and check
+              external access.
+            </dd>
+          </div>
+          <div>
+            <dt>One package at a time</dt>
+            <dd>
+              Ordinary lib/bin targets are supported, including custom names and
+              entry files. The complete workflow does not support multi-package
+              workspaces.
+            </dd>
+          </div>
+          <div>
+            <dt>Explicit analysis boundaries</dt>
+            <dd>
+              Analysis follows the active build configuration. Definitions
+              shared by lib and bin prefer lib; this does not cover every binary
+              variant.
+            </dd>
+          </div>
+          <div>
+            <dt>A pinned Rust toolchain</dt>
+            <dd>
+              Uses <code>nightly-2025-03-19</code> and cargo-llvm-cov
+              <code>0.6.16</code>. Linux CI and local macOS Apple Silicon have
+              been exercised; Windows has not been validated.
+            </dd>
+          </div>
+        </dl>
+        <a
+          class="text-link"
+          href="https://github.com/cppbear/PALM#supported-scope"
+          >Full scope and limitations
+          <svg class="arrow" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M6 18 18 6M6 6h12v12" /></svg
+        ></a>
+      </section>
+
+      <section class="research wrap" aria-labelledby="research-title">
+        <div>
+          <h2 id="research-title">
+            Built on research.<br />Open for exploration.
+          </h2>
+          <p>
+            PALM: Synergizing Program Analysis and LLMs to Enhance Rust Unit
+            Test Coverage.
+          </p>
+          <p class="research-note">
+            Published at ASE 2025. This maintained implementation includes
+            changes made after the paper’s experiments.
+          </p>
+        </div>
+        <div class="research-links">
+          <a href="https://doi.org/10.1109/ASE63991.2025.00223"
+            >Read the paper
+            <svg class="arrow" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M6 18 18 6M6 6h12v12" /></svg></a
+          ><a href="https://arxiv.org/abs/2506.09002"
+            >Open-access preprint
+            <svg class="arrow" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M6 18 18 6M6 6h12v12" /></svg></a
+          ><a href="https://github.com/cppbear/PALM#citation"
+            >Cite PALM
+            <svg class="arrow" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M6 18 18 6M6 6h12v12" /></svg></a
+          ><a href="https://github.com/cppbear/PALM/blob/main/CONTRIBUTING.md"
+            >Contribute
+            <svg class="arrow" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M6 18 18 6M6 6h12v12" /></svg
+          ></a>
+        </div>
+      </section>
+    </main>
+    <footer class="wrap site-footer">
+      <a class="wordmark" href="./"
+        ><img src="./assets/mark.svg" width="28" height="28" alt="" />PALM</a
+      >
+      <p>Rust tests, guided by program analysis.</p>
+      <nav aria-label="Footer navigation">
+        <a
+          href="https://github.com/cppbear/PALM/blob/main/docs/palm-rust-unit-test-generation.md"
+          lang="zh-CN"
+          >中文指南</a
+        ><a href="https://github.com/cppbear/PALM/blob/main/LICENSE"
+          >MIT License</a
+        ><a href="https://github.com/cppbear/PALM">GitHub</a>
+      </nav>
+    </footer>
+  </body>
+</html>

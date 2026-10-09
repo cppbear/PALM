@@ -1,12 +1,16 @@
-# PALM
+# <img src="site/assets/mark.svg" width="40" height="40" alt=""> PALM
 
+**Rust tests, guided by program analysis.**
+
+[![Website](https://img.shields.io/badge/website-PALM-5941bc)](https://cppbear.github.io/PALM/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-5941bc)](LICENSE)
 [![Build and test](https://github.com/cppbear/PALM/actions/workflows/ci.yml/badge.svg)](https://github.com/cppbear/PALM/actions/workflows/ci.yml)
 
 PALM generates Rust tests by combining program analysis with large language models. It extracts path constraints and code context, generates candidates, repairs compilation errors, and reports execution results and coverage with test code excluded.
 
 This is the maintained implementation of ***PALM: Synergizing Program Analysis and LLMs to Enhance Rust Unit Test Coverage***, published at ASE 2025. The current code includes changes made after the paper's experiments.
 
-[Quick start](#quick-start) · [Examples](examples/README.md) · [CLI reference](utgen/README.md) · [中文技术指南](docs/palm-rust-unit-test-generation.md) · [Paper](https://doi.org/10.1109/ASE63991.2025.00223) · [Preprint](https://arxiv.org/abs/2506.09002)
+[Website](https://cppbear.github.io/PALM/) · [Quick start](#quick-start) · [Examples](examples/README.md) · [CLI reference](utgen/README.md) · [中文技术指南](docs/palm-rust-unit-test-generation.md) · [Paper](https://doi.org/10.1109/ASE63991.2025.00223) · [Preprint](https://arxiv.org/abs/2506.09002)
 
 ## What PALM does
 
