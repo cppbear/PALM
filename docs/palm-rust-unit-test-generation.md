@@ -24,7 +24,7 @@ PALM 的思路是把程序分析纳入提示词构建过程：先用 Rust 编译
 1. 条件链提取：`brinfo` 通过 rustc API 同时获取 HIR 和 MIR，构建 CFG，遍历执行路径，恢复源码级条件，并输出每个函数的条件链。
 2. 上下文构建：`focxt` 和 `focxt/call_chain` 分析函数调用、使用到的类型、模块树和可见性，生成面向提示词的上下文代码片段。
 3. 提示词生成：`utgen` 读取条件链、函数源码、上下文和提示词模板，构造完整测试生成任务。
-4. 测试生成与修复：`utgen` 调用 LLM 生成测试，临时插入项目运行 `cargo build --tests` 和 `cargo llvm-cov`，再用编译错误驱动 LLM 修复失败测试。
+4. 测试生成与修复：`utgen` 调用 LLM 生成候选，按所属 Cargo 目标检查编译；单元模式临时插入源码，集成模式写入临时测试目标。编译错误用于驱动 LLM 修复，测试执行和覆盖率采集在后续阶段完成。
 
 ```mermaid
 flowchart LR
@@ -35,7 +35,7 @@ flowchart LR
     C --> F["utgen: Prompt 构建"]
     E --> F
     F --> G["LLM 生成测试"]
-    G --> H["cargo build --tests 编译筛选"]
+    G --> H["按目标检查编译，不执行测试"]
     H --> I["cargo llvm-cov 覆盖率统计"]
     H --> J["LLM 修复编译错误"]
     J --> H
@@ -109,9 +109,9 @@ flowchart LR
 - `brinfo/src/bin/cargo-brinfo.rs`
   - 实现 `cargo brinfo` 子命令。
   - 读取当前 crate 的 Cargo metadata。
-  - 对 lib/bin target 执行 `cargo check`。
+  - 对选定的 lib/bin target 执行 `cargo check`；混合目标由 `utgen analyze` 逐个调度。
   - 设置 `RUSTC_WRAPPER` 指向自身，使编译过程回到 `cargo-brinfo`。
-  - 通过 `BRINFO_TOP_CRATE_NAME` 判断当前 rustc 调用是否属于目标 crate。
+  - 同时核对 crate 名、目标类型和入口源码路径，判断当前 rustc 调用是否属于选定目标，避免把同名库依赖当作 bin 分析。
   - 对目标 crate 调用 `brinfo`，对依赖 crate 设置 `BRINFO_BE_RUSTC=1` 让它表现为普通 rustc。
 
 - `brinfo/src/bin/brinfo.rs`
@@ -163,7 +163,7 @@ Rust 的一个核心挑战是 MIR 的去糖。比如高级语法 `match color` �
 
 ### 5.5 `brinfo` 输出产物
 
-在目标 crate 目录下生成：
+单目标分析在目标 crate 目录下生成以下产物：
 
 | 输出 | 说明 |
 | --- | --- |
@@ -174,6 +174,8 @@ Rust 的一个核心挑战是 MIR 的去糖。比如高级语法 `match color` �
 | `brinfo/tmp/<encoded>/mir.txt` | MIR basic blocks 和 terminator 调试输出。 |
 | `brinfo/tmp/<encoded>/cond_map.json` | HIR 条件映射结果。 |
 | `brinfo/tmp/<encoded>/cfg.dot` | CFG dot 图。 |
+
+混合目标分析的原始产物位于 `brinfo/targets/<kind>/<target-name>/brinfo/`。根目录的 `brinfo/name_map.json` 和 `brinfo/brdata/` 是筛选归属后的汇总结果；调试文件不会复制到根目录。汇总标识与原始标识不同，查看某个目标的调试文件时，应使用该目标原始 `name_map.json` 中的标识。
 
 ## 6. `focxt/call_chain` 模块说明
 
@@ -191,13 +193,15 @@ Rust 的一个核心挑战是 MIR 的去糖。比如高级语法 `match color` �
   - 遍历 MIR basic blocks 中的 `TerminatorKind::Call`，提取调用函数。
   - 遍历 local declarations 和调用参数，递归收集 ADT、数组、切片、裸指针、tuple 等类型的子类型。
 
-输出在目标 crate 的 `focxt/` 目录下：
+单目标分析输出在目标 crate 的 `focxt/` 目录下：
 
 | 输出 | 说明 |
 | --- | --- |
 | `focxt/callsandtypes/<encoded>.json` | 每个函数的直接调用和类型依赖。 |
 | `focxt/basic_blocks/<encoded>.txt` | basic blocks 和 locals 调试信息。 |
 | `focxt/impl_informations.json` | 函数所属模块、函数名、结构体名、trait 名、完整名和编码名。 |
+
+混合目标的这些原始文件保存在 `brinfo/targets/<kind>/<target-name>/focxt/`。根目录 `focxt/impl_informations.json` 是汇总索引，保留最终被测函数的目标归属；原始调用依赖和调试文件仍按目标保存。
 
 ## 7. `focxt` 模块说明
 
@@ -207,19 +211,21 @@ Rust 的一个核心挑战是 MIR 的去糖。比如高级语法 `match color` �
 
 `focxt/src/main.rs` 的流程是：
 
-1. 解析 `--crate <CRATE_PATH>`。
-2. 执行 `run_call_chain`，先 `cargo clean`，再在目标 crate 下运行 `cargo call-chain`。
-3. 读取 `focxt/impl_informations.json`。
-4. 创建 `CrateContext` 并解析 crate。
+1. 解析 `--crate <CRATE_PATH>`，通过 Cargo metadata 获取目标名称和入口；混合目标由 `utgen analyze` 传入当前选择。
+2. 执行 `run_call_chain`，先 `cargo clean`，再为选定目标运行 `cargo call-chain`。
+3. 从当前目标的输出目录读取 `focxt/impl_informations.json`。
+4. 用目标 crate 名、入口文件和输出目录创建 `CrateContext`，解析该入口对应的模块树。
 5. 建立模块树和完整名称。
 6. 生成扩展后的调用/类型依赖。
 7. 为每个函数输出上下文 `.rs` 文件。
 
+分析 bin 时，本地定义与包内库的定义分开处理；引用到的库函数和类型放入标明来源的依赖段。最终被测函数列表采用 lib 优先规则，不会因此丢弃 bin 构建上下文所需的原始定义。
+
 ### 7.2 模块树与 AST 上下文
 
 - `focxt/src/collect_context/crate_context.rs`
-  - 读取 `Cargo.toml` 获取 crate 名。
-  - 识别 `src/main.rs` 和 `src/lib.rs` 入口。
+  - 接收上层从 Cargo metadata 取得的目标 crate 名、入口和输出目录。
+  - 每次解析一个选定入口，支持 Cargo 声明的自定义名称与入口路径。
   - 组织多个 `ModContext`。
   - 输出模块树、函数名清单、调试上下文。
 
@@ -239,7 +245,7 @@ Rust 的一个核心挑战是 MIR 的去糖。比如高级语法 `match color` �
 
 ### 7.3 `focxt` 输出产物
 
-在目标 crate 目录下生成：
+单目标分析在目标 crate 目录下生成：
 
 | 输出 | 说明 |
 | --- | --- |
@@ -249,6 +255,8 @@ Rust 的一个核心挑战是 MIR 的去糖。比如高级语法 `match color` �
 | `focxt/context.txt` | 整个 `CrateContext` 调试输出。 |
 | `focxt/mod_trees/mod_tree*.txt` | 模块树列表。 |
 | `focxt/functions/function*.txt` | 完整函数名列表。 |
+
+混合目标的原始上下文、依赖和调试文件位于 `brinfo/targets/<kind>/<target-name>/focxt/`。根目录 `focxt/` 仅保留最终被测函数的 `.rs` 上下文与汇总 `impl_informations.json`。原始文件名使用各目标索引中的编码，不能直接套用汇总编码。
 
 ## 8. `utgen` 模块说明
 
@@ -261,6 +269,7 @@ Rust 的一个核心挑战是 MIR 的去糖。比如高级语法 `match color` �
 ```text
 utgen pre-process --project-dir <PROJECT_DIR> [--work-dir <WORK_DIR>...]
 utgen analyze --project-dir <STANDALONE_CRATE_DIR>
+utgen coverage --project-dir <STANDALONE_CRATE_DIR>
 utgen gen --project-dir <PROJECT_DIR> [--work-dir <WORK_DIR>...] [--tasks <N>] [--integration] [--requirement] [--context] [--oracle]
 utgen fix --project-dir <PROJECT_DIR> [--work-dir <WORK_DIR>...] [--tasks <N>] [--integration]
 ```
@@ -274,9 +283,10 @@ utgen fix --project-dir <PROJECT_DIR> [--work-dir <WORK_DIR>...] [--tasks <N>] [
 | `-p, --project-dir` | 项目根目录。路径会相对于当前目录解析并 canonicalize。 |
 | `-w, --work-dir` | 工作目录，可重复传入或用逗号分隔，相对路径基于当前命令执行目录，默认等于 project dir。 |
 | `-t, --tasks` | 默认 `4`，必须大于 `0`。生成和修复均限制同时活跃的被测函数任务数；同一函数内的条件链、生成阶段或修复轮次依次执行。 |
-| `--functions-file` | 可选 UTF-8 函数清单，每行一个 `brinfo/name_map.json` 中的完整名称。生成、修复及其统计均按清单筛选；空行忽略、重复项去重，不支持通配符。 |
+| `--request-timeout` | `gen` 和 `fix` 的单次模型请求期限，默认 `180` 秒，必须大于 `0`；不限制 Cargo 子进程。 |
+| `--functions-file` | 可选 UTF-8 函数清单，每行一个 `brinfo/name_map.json` 中的索引键，也可使用能唯一定位的 Rust 路径。生成、修复及其统计均按清单筛选；空行忽略、重复项去重，不支持通配符。 |
 | `--max-requests` | 可选的整次命令请求尝试次数上限，必须大于 `0`；默认不设总上限。所有并发任务和重试共享该额度。 |
-| `-i, --integration` | 生成集成测试，放到 `tests/` 目录，按分析结果的 `visible` 标志筛选函数并进行编译检查。 |
+| `-i, --integration` | `gen` 和 `fix` 均支持集成模式，使用 `tests/` 中的测试目标；生成时选择满足分析可见性要求的库函数，实际可访问性仍由编译确认。 |
 | `-r, --requirement` | 在提示词中加入条件链约束。 |
 | `-c, --context` | 在提示词中加入 `focxt/<encoded>.rs` 上下文。 |
 | `-o, --oracle` | 开启三段式生成：输入范围、测试前缀、oracle 分别生成。该模式是可选实验模式，不是按路径任务分解本身。 |
@@ -357,8 +367,8 @@ export PALM_CONFIG="$(pwd)/utgen/res/api.json"
   - `generation_tests` 根据 `--oracle` 选择三段式生成或完整生成。
   - `gen_full_tests` 使用 `test_prompt.json` 一次性生成测试。
   - `gen_tests_cot` 使用 `input -> prefix -> oracle` 三步流程。
-  - `check_unit` 会临时把测试插入被测源码文件，运行 `cargo build --tests`，记录每个候选是否可编译，然后恢复文件。
-  - `check_integration` 会写入临时 `tests/palm_candidate.rs`，只编译该集成测试目标。
+  - `check_unit` 会临时把测试插入被测源码文件，运行 `cargo test --lib --no-run` 或 `cargo test --bin <name> --no-run`，记录每个候选是否可编译，然后恢复文件。
+  - `check_integration` 会写入临时 `tests/palm_candidate.rs`，以 `cargo build --test palm_candidate` 检查编译，不执行测试。Cargo 仍可能构建包内库和 bin。
 
 - `utgen/src/gene/cot/*.rs`
   - `input_infer.rs`：生成输入范围。
@@ -389,26 +399,28 @@ export PALM_CONFIG="$(pwd)/utgen/res/api.json"
 核心文件：
 
 - `utgen/src/run/run.rs`
-  - `run_test` 在覆盖率模式下执行：
+  - `run_test` 按保存的目标选择单元测试 harness。以 lib 为例，覆盖率模式执行：
 
     ```sh
-    cargo llvm-cov --tests --ignore-run-fail --branch --cobertura --output-path coverage.xml
+    cargo llvm-cov --lib --ignore-run-fail --branch --cobertura --output-path coverage.xml
     cargo llvm-cov report --json --output-path coverage.json
     ```
 
-  - 错误模式下执行：
+  - 错误模式只收集编译诊断，不执行测试。以 lib 为例：
 
     ```sh
-    cargo test --tests --message-format json
+    cargo test --lib --no-run --message-format json
     ```
 
   - `gen_test_rate` 读取生成结果，运行覆盖率，计算每个被测函数的测试数、编译通过数、运行通过数、行覆盖和分支覆盖。
+
+bin 的单元模式将 `--lib` 替换为 `--bin <name>`；集成模式使用对应的 `--test <name>` 目标。独立 `utgen coverage` 和原有测试对比仍使用包级 `--tests`，与选定候选的统计范围不同。
 
 - `utgen/src/run/coverage.rs`
   - 覆盖率入口复用预处理的测试识别规则，在测试模块、独立测试函数及 `cfg(test)` 辅助函数/方法前临时添加 `#[coverage(off)]`。整个测试模块（含生成的 `llmtests`）排除后，其中的辅助代码默认不计入覆盖率分子和分母；测试专用 `impl` 按方法处理，带文件级 `#![cfg(test)]` 的模块整文件排除。被调用的生产函数仍参与统计。
   - 已有 coverage 属性和 feature 开关予以复用；条件属性只在原条件不成立时补充，条件由编译器判断，显式 `coverage(on)` 保留。在 crate 根文件同一行临时开启 `coverage_attribute`，保持原行号，不覆盖编译 flags。成功或编译/导出报错返回前恢复源文件原始内容；强制终止后的恢复留待后续处理。
   - 测试只执行一次，先输出 XML，再由 `report --json` 导出同一份运行数据。第一条命令保留默认清理，避免候选之间累积旧覆盖率。
-  - `utgen coverage -p <原始 crate 工作副本>` 可在预处理前测量原有测试，无需模型配置和分析产物；结果保留在该副本的 `coverage.xml`、`coverage.json`。断言失败仍导出覆盖率，编译或报告错误则返回失败。当前支持源码位于 `src/` 的独立 crate，非入口文件若是合法表达式片段（如 `include!` 引入的表达式），预处理与覆盖率均原样保留，不自动改写片段内部的测试代码；入口文件与其他解析错误仍严格检查。不展开宏，也不自动推断未标记的公共辅助函数是否仅用于测试。
+  - `utgen coverage -p <原始 crate 工作副本>` 可在预处理前测量原有测试，无需模型配置和分析产物；结果保留在该副本的 `coverage.xml`、`coverage.json`。断言失败仍导出覆盖率，编译或报告错误则返回失败。源码处理范围为独立 package 的 `src/` 及 Cargo 声明的 lib/bin 入口文件，不会遍历任意位于 `src/` 外的模块文件。非入口文件若是合法表达式片段（如 `include!` 引入的表达式），预处理与覆盖率均原样保留，不自动改写片段内部的测试代码；入口文件与其他解析错误仍严格检查。不展开宏，也不自动推断未标记的公共辅助函数是否仅用于测试。
 
 - `utgen/src/run/coverage_json.rs`
   - 解析 `coverage.json` 中的 branch 信息。
@@ -436,7 +448,8 @@ export PALM_CONFIG="$(pwd)/utgen/res/api.json"
 
 - `utgen/src/run/llm_fix.rs`
   - 读取 `utgen/generation/pre_fix`，复制或合并到 `utgen/generation/llm_fix`。
-  - 对不可编译且未修复的测试，临时插入源码并运行 `cargo test --tests --message-format json`。
+  - 单元模式把候选临时插入源码，按保存的 lib/bin 目标运行 `cargo test --lib/--bin <name> --no-run --message-format json`，读取编译错误而非普通警告。
+  - 集成模式将候选导入、辅助代码和测试体写入临时 `tests/palm_candidate.rs`，以 `cargo test --test palm_candidate --no-run --message-format json` 收集诊断，不插入生产源码。Cargo 仍可能编译依赖库及包内 bin。
   - 解析编译错误，抽取错误相关代码片段。
   - 构造 `rustassistant_prompt.json` 中定义的 ChangeLog 格式要求。
   - 调用 LLM 修复，应用 ChangeLog，重新编译。
@@ -481,8 +494,8 @@ utgen/fixed_result/<encoded>.json
 安装 nightly 工具链和组件：
 
 ```sh
-rustup install nightly-2025-03-19
-rustup component add --toolchain nightly-2025-03-19 rust-src rustc-dev llvm-tools-preview
+rustup toolchain install nightly-2025-03-19 --profile minimal \
+  --component rust-src --component rustc-dev --component llvm-tools-preview --component rust-analyzer
 ```
 
 安装覆盖率工具：
@@ -496,10 +509,10 @@ cargo +stable install cargo-llvm-cov --version 0.6.16 --locked
 ```toml
 [toolchain]
 channel = "nightly-2025-03-19"
-components = ["rust-src", "rustc-dev", "llvm-tools-preview"]
+components = ["rust-src", "rustc-dev", "llvm-tools-preview", "rust-analyzer"]
 ```
 
-本仓库根目录已经有 `rust-toolchain.toml`，示例项目 `examples/bytes/` 也包含对应配置。
+将上述内容保存为 `rust-toolchain.toml`。本仓库与示例均固定同一 nightly；`rust-analyzer` 用于编辑器支持，程序分析依赖 `rustc-dev` 等编译器组件。运行验证脚本还需要 Python 3.9 或更高版本，以及 Git、rustup、stable Rust 和本机 C 链接器；完整准备步骤见[项目 README](../README.md#prerequisites)。
 
 构建和安装无需密钥。运行 `gen`、`fix` 前准备 `utgen/res/api.json`，并按 8.2 节设置 `PALM_CONFIG` 或传入 `--config`：
 
@@ -541,6 +554,7 @@ cargo install --path utgen --locked
 
 ```sh
 cargo brinfo --help
+cargo call-chain --help
 focxt --help
 utgen --help
 ```
@@ -560,7 +574,7 @@ utgen pre-process -p <project-root> -w <work-dir-1> -w <work-dir-2>
 预处理会：
 
 - 将所选 crate 根目录的 `tests` 重命名为 `tests.bak`；已有备份不会被覆盖。
-- 将 `src` 中测试专属模块，以及带 `#[test]` 或路径末段为 `test` 的属性的函数替换为空白，保持换行和字节位置。
+- 访问所选 package 的 `src/` 和 Cargo 声明的 lib/bin 入口文件，将可识别的测试专属模块、函数、impl 与方法替换为空白，保持换行和字节位置。
 
 模块识别解析 `cfg` 表达式，仅移除能确定在关闭 `test` 时不可用的模块；保留 `cfg(not(test))`，对未知 feature/target 条件保守处理。预处理修改目标项目源码树，没有完整的反向预处理命令，应在临时副本中运行。先预处理，再对准备好的源码分析；空白替换保持字节位置，UTF-8 字符列号仍应以处理后的源码为准。`-w` 的相对路径基于当前命令执行目录。
 
@@ -572,7 +586,7 @@ utgen pre-process -p <project-root> -w <work-dir-1> -w <work-dir-2>
 utgen analyze -p <target-crate-path>
 ```
 
-也可以手动进入准备好的目标 crate 根目录提取条件链。已有 `cargo check` 缓存可能使编译器包装器不执行，因此需要先清理：
+只有一个普通 lib/bin 目标时，也可以手动进入准备好的目标 crate 根目录提取条件链。已有 `cargo check` 缓存可能使编译器包装器不执行，因此需要先清理：
 
 ```sh
 cargo clean
@@ -585,7 +599,7 @@ cargo brinfo
 focxt -c <target-crate-path>
 ```
 
-`focxt` 内部会运行 `cargo call-chain`，因此需要先安装 `focxt/call_chain`。
+`focxt` 内部会运行 `cargo call-chain`，因此需要先安装 `focxt/call_chain`。混合目标必须使用 `utgen analyze`；未指定目标的底层命令会拒绝多个目标，不能用上面的手动流程替代。
 
 ### 10.5 生成测试
 
@@ -624,7 +638,7 @@ utgen fix -p <target-crate-path>
 
 修复阶段读取 `utgen/generation/pre_fix`，针对不可编译测试调用 LLM 生成 ChangeLog 并重新验证。修复结果写入 `utgen/generation/llm_fix`，覆盖率统计写入 `utgen/fixed_result`。
 
-`fix` 默认将测试插入源码，以单元测试方式修复和统计。集成测试需要在生成和修复时都传入 `--integration`：修复阶段把单个候选写入临时集成测试目标，只编译该目标；可以修改导入、模块级辅助代码和测试体，并单独保存各候选的导入与辅助代码。整体执行和逐候选覆盖率统计都保持集成测试模式，不再把候选插入源码。覆盖率阶段仍会临时添加排除测试代码的属性并恢复源文件。
+`fix` 默认将测试插入源码，以单元测试方式修复和统计。集成测试需要在生成和修复时都传入 `--integration`：修复阶段把单个候选写入临时集成测试目标，以该目标收集编译诊断，不执行测试；可以修改导入、模块级辅助代码和测试体，并单独保存各候选的导入与辅助代码。整体执行和逐候选覆盖率统计都保持集成测试模式，不再把候选插入源码。Cargo 可能同时构建依赖库和包内 bin；覆盖率阶段仍会临时添加排除测试代码的属性并恢复源文件。
 
 候选缓存记录生成模式，模式不匹配时会报错；没有模式字段的旧缓存按单元测试处理，旧集成测试缓存应在新的工作副本中重新生成。两条命令还应传入相同的函数清单。运行时断言失败不属于编译修复流程的目标。
 
@@ -642,14 +656,18 @@ utgen pre-process -p "$palm_example_dir"
 utgen analyze -p "$palm_example_dir"
 ```
 
-按单元测试模式生成和修复：
+先使用已有的两函数清单进行单元测试试跑，分别限制生成和修复的请求尝试次数：
 
 ```sh
-utgen gen -p "$palm_example_dir" --requirement --context
-utgen fix -p "$palm_example_dir"
+utgen gen -p "$palm_example_dir" --requirement --context \
+  --functions-file "$palm_repo/examples/bytes-smoke-2.txt" --max-requests 8
+utgen fix -p "$palm_example_dir" \
+  --functions-file "$palm_repo/examples/bytes-smoke-2.txt" --max-requests 8
 ```
 
-切换到 integration、其他提示词或其他模型时，使用新的目标副本并重新分析，避免复用旧的生成缓存。更详细的示例见 [examples/README.md](../examples/README.md)。[最小流程验证](minimal-pipeline.md)使用固定本地响应检查生成、修复、执行和覆盖率；[Bytes 分析检查](bytes-analysis.md)核对默认配置下导出的 663 个函数及其上下文。真实模型实验按示例中的函数清单和请求额度单独开展，并检查请求报告及测试结果。
+每次命令结束后先检查状态和请求报告；重试命令会开始新的请求额度。清单限制候选生成及其统计，若工作副本中保留 `tests.bak/`，原有集成测试对比仍按包执行。只验证候选时，可在预处理后把该备份移到工作副本之外保存。
+
+切换到 integration、其他提示词或其他模型时，使用新的目标副本并重新分析，避免复用旧的生成缓存。更详细的示例见 [examples/README.md](../examples/README.md)，其中也提供限额的集成测试和混合目标试跑。[最小流程验证](minimal-pipeline.md)使用固定本地响应检查生成、修复、执行和覆盖率；[Bytes 分析检查](bytes-analysis.md)核对默认配置下导出的 663 个函数及其上下文。
 
 完成后重点查看临时目标目录中的以下路径：
 
@@ -675,14 +693,14 @@ utgen --config utgen/res/api.json gen -p <target-crate-path> --requirement --con
 
 ### 11.2 `cargo brinfo` 在 workspace 根目录失败
 
-`cargo-brinfo` 需要定位当前 package。对于 workspace，建议进入具体 crate 目录运行，或者明确使用目标 crate 的 manifest。
+`cargo-brinfo` 需要定位当前 package。底层单目标分析可进入具体 package 目录，或明确传入其 manifest。该操作不表示 PALM 已支持 workspace 的完整生成流程；`utgen analyze` 当前要求一个独立 Cargo package，混合 lib/bin 目标也应由它统一调度。
 
 ### 11.3 `brinfo` 编译失败或找不到 rustc 私有 crate
 
 确认使用 `nightly-2025-03-19`，并安装：
 
 ```sh
-rust-src rustc-dev llvm-tools-preview
+rustup component add --toolchain nightly-2025-03-19 rust-src rustc-dev llvm-tools-preview
 ```
 
 这些 crate 使用了 `#![feature(rustc_private)]`，必须依赖 nightly 和 rustc-dev。

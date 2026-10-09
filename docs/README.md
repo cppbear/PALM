@@ -11,7 +11,7 @@ PALM's implementation, technical guide, and conference materials are available i
 | [Technical guide in Chinese](palm-rust-unit-test-generation.md) | Condition chains, context construction, generation, repair, and usage. |
 | [Minimal pipeline](minimal-pipeline.md) | Deterministic program-analysis, generation, repair, and coverage validation. |
 | [Bytes analysis](bytes-analysis.md) | Analysis artifacts, method identities, constructor context, and timing output. |
-| [bytes example](../examples/README.md) | Commands for analyzing a working copy of the bundled target. |
+| [Examples](../examples/README.md) | Minimal and mixed-target fixtures, bytes analysis, and bounded unit/integration model trials. |
 | [utgen reference](../utgen/README.md) | Configuration, CLI behavior, and output files. |
 | [ASE 2025 materials](ase2025/README.md) | Original poster and presentation PDFs. |
 | [Build and installation checks](build-validation.md) | Build, tests, CLI entry points, installation, and CI scope. |

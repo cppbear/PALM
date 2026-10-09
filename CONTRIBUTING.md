@@ -18,6 +18,8 @@ Use the existing check relevant to your change:
 | Generation, repair, result handling, or test execution | `python3 scripts/check_minimal.py` |
 | Task scheduling, request budgets, or failure cleanup | `python3 scripts/check_tasks.py` |
 | Coverage annotations or preprocessing | `python3 scripts/check_coverage.py` |
+| Coverage denominators or target-specific baseline maps | `cargo test -p utgen --locked coverage_baselines_match_test_build_modes -- --ignored` |
+| Library/binary ownership, target selection, or dependency context | `python3 scripts/check_mixed.py` |
 | Analysis, focal context, or method identity | `cargo build --workspace --release --locked` then `python3 scripts/check_bytes.py` |
 
 The checks use temporary targets and local model fixtures. They do not need API keys or call an external model service; dependency installation may need network access. The full suite runs in CI for code changes. Documentation changes should preserve working links, command examples, and the distinction between offline validation and real-model results.

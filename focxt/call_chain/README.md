@@ -29,12 +29,14 @@ The wrapper analyzes a single ordinary `lib` or `bin` target through `cargo chec
 
 ## Output
 
-Paths are relative to the target crate:
+For direct single-target analysis, paths are relative to the target crate:
 
 | Path | Contents |
 | --- | --- |
 | `focxt/impl_informations.json` | Function and impl identities, source locations, and encoded artifact identifiers. |
 | `focxt/callsandtypes/<encoded>.json` | Direct calls and type dependencies for each function. |
 | `focxt/basic_blocks/<encoded>.txt` | MIR basic blocks and locals for debugging. |
+
+When `utgen analyze` processes a mixed package, these raw files live under `brinfo/targets/<kind>/<target-name>/focxt/`. The top-level `focxt/impl_informations.json` is the combined focal index; it does not replace the raw target indices for looking up calls/types or debug files.
 
 call-chain supplies compiler data; focxt produces the per-function `.rs` context files used by generation. Changes to shared data should be checked with both tools. See [minimal pipeline validation](../../docs/minimal-pipeline.md) and [bytes analysis validation](../../docs/bytes-analysis.md).
