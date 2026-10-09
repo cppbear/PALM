@@ -184,20 +184,14 @@ pub fn collect_coverage(work_dir: &Path, json: bool) -> io::Result<Output> {
     collect_coverage_for_tests(work_dir, json, &[])
 }
 
-pub(crate) fn collect_coverage_for_tests(
-    work_dir: &Path,
-    json: bool,
-    targets: &[String],
-) -> io::Result<Output> {
-    let canonical_dir = work_dir.canonicalize()?;
-    let work_dir = canonical_dir.as_path();
+pub(crate) fn project_metadata(work_dir: &Path) -> io::Result<cargo_metadata::Metadata> {
     let metadata = MetadataCommand::new()
         .manifest_path(work_dir.join("Cargo.toml"))
         .current_dir(work_dir)
         .no_deps()
         .exec()
         .map_err(io::Error::other)?;
-    let package = metadata.root_package().ok_or_else(|| {
+    metadata.root_package().ok_or_else(|| {
         io::Error::other("coverage requires a standalone crate with Cargo.toml and src/")
     })?;
     if metadata.workspace_members.len() != 1 || !work_dir.join("src").is_dir() {
@@ -205,6 +199,15 @@ pub(crate) fn collect_coverage_for_tests(
             "coverage currently supports one standalone crate",
         ));
     }
+    Ok(metadata)
+}
+
+pub(crate) fn with_test_exclusions<T>(
+    work_dir: &Path,
+    metadata: &cargo_metadata::Metadata,
+    action: impl FnOnce() -> io::Result<T>,
+) -> io::Result<T> {
+    let package = metadata.root_package().unwrap();
     let roots: BTreeSet<PathBuf> = package
         .targets
         .iter()
@@ -237,6 +240,33 @@ pub(crate) fn collect_coverage_for_tests(
         for (path, _, annotated) in &changes {
             fs::write(path, annotated)?;
         }
+        action()
+    })();
+    // Restore even when compilation, test launch, or report export failed.
+    // Try every changed file before reporting a restoration error.
+    let mut restore_error = None;
+    for (path, original, _) in changes {
+        if let Err(err) = fs::write(&path, original) {
+            restore_error.get_or_insert_with(|| {
+                io::Error::other(format!("failed to restore {}: {err}", path.display()))
+            });
+        }
+    }
+    if let Some(err) = restore_error {
+        return Err(err);
+    }
+    result
+}
+
+pub(crate) fn collect_coverage_for_tests(
+    work_dir: &Path,
+    json: bool,
+    targets: &[String],
+) -> io::Result<Output> {
+    let canonical = work_dir.canonicalize()?;
+    let work_dir = canonical.as_path();
+    let metadata = project_metadata(work_dir)?;
+    with_test_exclusions(work_dir, &metadata, || {
         // The first command uses llvm-cov's default cleanup. --no-report would
         // imply --no-clean and mix profiles from different generated candidates.
         let mut args = Vec::new();
@@ -262,21 +292,7 @@ pub(crate) fn collect_coverage_for_tests(
             )?;
         }
         Ok(output)
-    })();
-    // Restore even when compilation, test launch, or report export failed.
-    // Try every changed file before reporting a restoration error.
-    let mut restore_error = None;
-    for (path, original, _) in changes {
-        if let Err(err) = fs::write(&path, original) {
-            restore_error.get_or_insert_with(|| {
-                io::Error::other(format!("failed to restore {}: {err}", path.display()))
-            });
-        }
-    }
-    if let Some(err) = restore_error {
-        return Err(err);
-    }
-    result
+    })
 }
 
 #[cfg(test)]

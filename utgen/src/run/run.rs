@@ -1,4 +1,5 @@
 use super::{
+    coverage_baseline::{BaselineCache, FunctionMapping},
     coverage_json::CoverageJson,
     integration::{self, gen_integration},
     prepare::get_test_gen_infos,
@@ -7,7 +8,7 @@ use crate::{
     FunctionSelection,
     run::timed_test,
     types::TestGenInfo,
-    utils::{backup_file, delete_backup, insert_test, restore_file},
+    utils::{RestoreOnDrop, backup_file, delete_backup, insert_test, restore_file},
     run::run_all::{prepare_all_unit_tests_for_one_shot_run},
 };
 use log::{error, info};
@@ -177,6 +178,28 @@ pub struct TestRateInfo {
 }
 
 impl TestRateInfo {
+    // A baseline supplies only the denominator, never a generated candidate or hit.
+    fn apply_baseline(&mut self, mapping: FunctionMapping) {
+        self.codes_lines = mapping.lines;
+        self.codes_branches = mapping.branches.into_iter().map(
+            |(start_line, start_column, end_line, end_column)| BranchCoverageInfo {
+                start_line,
+                start_column,
+                end_line,
+                end_column,
+                positive: false,
+                negative: false,
+            },
+        ).collect();
+        self.coverage_available = !self.codes_lines.is_empty() || !self.codes_branches.is_empty();
+        self.lines = self.codes_lines.len() as i32;
+        self.branches = if self.codes_branches.is_empty() {
+            i32::from(self.coverage_available)
+        } else {
+            2 * self.codes_branches.len() as i32
+        };
+    }
+
     fn parse_codes_lines_and_branches(&mut self) {
         let mut lines = 0;
         let mut lines_covered = 0;
@@ -363,6 +386,8 @@ pub fn gen_test_rate(
         }
     } else {
         let integration_infos = gen_integration(&test_gen_infos, work_dir);
+        let mut baselines =
+            BaselineCache::new(work_dir, true).expect("Cannot prepare coverage baselines");
         let mut test_rate_infos: Vec<TestRateInfo> = Vec::new();
         let start_time = SystemTime::now();
         // let _ = target_clean(work_dir);
@@ -446,6 +471,12 @@ pub fn gen_test_rate(
                             end,
                             &mut test_rate_info,
                         );
+                    }
+                    if !test_rate_info.coverage_available {
+                        let mapping = baselines
+                            .mapping(work_dir, &function_name, &file_path, begin, end)
+                            .expect("Cannot collect integration coverage baseline");
+                        test_rate_info.apply_baseline(mapping);
                     }
                     test_rate_infos.push(test_rate_info);
                     break;
@@ -780,6 +811,7 @@ fn gen_coverage_and_pass_rate(
     test_rate_infos: &mut Vec<TestRateInfo>,
 ) {
     let mut progress = 0;
+    let mut baselines = BaselineCache::new(work_dir, false).expect("Cannot prepare coverage baselines");
     for test_gen_info in test_gen_infos.iter() {
         let file_rela = test_gen_info.get_file();
         let file_path = project_dir.join(&file_rela);
@@ -801,6 +833,7 @@ fn gen_coverage_and_pass_rate(
         let template = include_str!("../../res/code_template.json");
         let code_template: Vec<String> = serde_json::from_str(template).unwrap();
         backup_file(Path::new(&file_path));
+        let restore = RestoreOnDrop(&file_path);
 
         let mut test_rate_info = TestRateInfo {
             function_name: name.clone(),
@@ -948,46 +981,7 @@ fn gen_coverage_and_pass_rate(
                 }
             }
         }
-        if tests_run == 0 {
-            let mut mod_code = code_template.clone();
-            let sig = format!("fn test_{}()", fn_name,);
-            info!("Running test fn test_{}_{:02}()", fn_name, tests);
-            let mut fn_code = vec!["#[test]".to_string()];
-            fn_code.push(sig);
-            let empty_codes = vec!["{".to_string(), "}".to_string()];
-            fn_code.extend(empty_codes.clone());
-            let pos = mod_code.len() - 1;
-            mod_code.splice(pos..pos, fn_code);
-            insert_test(insert_kind, Path::new(&file_path), &mod_code);
-            // let _ = target_clean(work_dir);
-            let test_type = TestType::CoverageRate;
-            let test_name = format!("test_{}", fn_name);
-            let run_test_output = run_test(project_dir, work_dir, test_type, true, false);
-            let loc = test_gen_info.get_loc();
-            let begin = loc.get_startline() as i32;
-            let end = loc.get_endline() as i32;
-            gen_one_codes_lines(
-                project_dir,
-                work_dir,
-                &name,
-                &file_path,
-                begin,
-                end,
-                &empty_codes,
-                &mut test_rate_info,
-            );
-            gen_one_codes_branchs(
-                project_dir,
-                work_dir,
-                &name,
-                &file_path,
-                begin,
-                end,
-                &empty_codes,
-                &mut test_rate_info,
-            );
-            restore_file(&file_path);
-        }
+        drop(restore);
         delete_backup(&file_path);
         tests_compiled_rate = if tests > 0 {
             tests_compiled as f64 / tests as f64 * 100.0
@@ -1024,6 +1018,18 @@ fn gen_coverage_and_pass_rate(
         test_rate_info.oracles_passed = oracles_passed;
         test_rate_info.oracles_passed_rate = oracles_passed_rate;
         test_rate_info.parse_codes_lines_and_branches();
+        if !test_rate_info.coverage_available {
+            let loc = test_gen_info.get_loc();
+            let mapping = baselines.mapping(
+                work_dir,
+                &name,
+                &file_path,
+                loc.get_startline() as i32,
+                loc.get_endline() as i32,
+            )
+                .expect("Cannot collect unit coverage baseline");
+            test_rate_info.apply_baseline(mapping);
+        }
         test_rate_infos.push(test_rate_info);
     }
 }

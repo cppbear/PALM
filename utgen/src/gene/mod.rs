@@ -73,6 +73,7 @@ pub async fn gen_tests_project(
         ));
     }
     validate_analysis(project_dir, work_dir)?;
+    crate::run::validate_targets(project_dir, work_dir, functions, integration)?;
     let saved_dir = project_dir.join("utgen/generation/pre_fix");
     if saved_dir.is_dir() {
         for entry in fs::read_dir(saved_dir)? {

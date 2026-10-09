@@ -74,6 +74,9 @@ jobs:
       - name: Check coverage annotation compatibility
         if: steps.scope.outputs.run_code == 'true'
         run: python3 scripts/check_coverage.py
+      - name: Check coverage baselines for unit and integration builds
+        if: steps.scope.outputs.run_code == 'true'
+        run: cargo test -p utgen --locked coverage_baselines_match_test_build_modes -- --ignored
       - name: Validate the minimal analysis and test pipeline
         if: steps.scope.outputs.run_code == 'true'
         run: python3 scripts/check_minimal.py
