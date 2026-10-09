@@ -92,7 +92,7 @@ The following is a command reference rather than captured help output. Use `utge
 | `analyze` | Clear Cargo's check cache, run brinfo and focxt, and validate their function indices and artifacts. Currently supports one standalone crate passed with `-p`. |
 | `coverage` | Run existing tests once and export XML/JSON with test code excluded. Supports one standalone crate passed with `-p`. |
 | `gen` | Generate candidates, check compilation, and collect pre-repair statistics. |
-| `fix` | Attempt to repair candidates with compilation errors and collect post-repair statistics using unit-test insertion. |
+| `fix` | Attempt to repair compilation errors and collect post-repair statistics, using unit-test insertion or integration-test targets with `--integration`. |
 
 All commands take `-p, --project-dir`. Except for `coverage`, commands also accept `-w, --work-dir` for individual crates in a larger project. Both relative paths are resolved against the current shell directory; work directories do not resolve against `--project-dir`. Work directories may be repeated or comma-separated and default to the project directory. The current `analyze` command requires a single standalone crate; use that crate as `-p`, with no separate work-directory selection.
 

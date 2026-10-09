@@ -2,6 +2,12 @@
 
 Start with the [minimal pipeline](../docs/minimal-pipeline.md) for an automated, no-credentials validation. The commands below use a working copy of the larger bytes target and limit model generation and repair to selected functions.
 
+| Example | Purpose |
+| --- | --- |
+| [minimal](minimal/README.md) | Offline generation, compilation repair, execution, and coverage with fixed local model responses. |
+| [mixed-targets](mixed-targets/README.md) | Library/binary ownership checks and a four-function model trial. |
+| [bytes](#bytes) | Larger analysis target, with limited unit and integration model trials below. |
+
 The [bytes analysis check](../docs/bytes-analysis.md) validates all 663 exported functions and their context artifacts on two fresh copies. Run `cargo build --workspace --release --locked` and `python3 scripts/check_bytes.py` from the repository root. This check does not call a model service or measure generated-test quality.
 
 ## bytes
@@ -68,14 +74,24 @@ Both commands default to four active function tasks and a 180-second deadline pe
 
 ### Integration Test Mode
 
-Use a fresh working copy and repeat preprocessing and analysis before choosing this mode, since existing generation results are reused independently of these flags:
+Use a fresh working copy, since unit and integration candidates cannot share a generation cache. After setting `palm_repo` and `PALM_CONFIG` as above, this trial selects only `Bytes::len` and `BytesMut::truncate` from the [integration function list](bytes-smoke-integration-2.txt):
 
 ```sh
-utgen gen -p <target-crate-path> --integration --requirement --context
-utgen fix -p <target-crate-path> --integration
+palm_integration_dir="$(mktemp -d "${TMPDIR:-/tmp}/palm-bytes-integration.XXXXXX")"
+cp -R "$palm_repo/examples/bytes/." "$palm_integration_dir/"
+utgen pre-process -p "$palm_integration_dir"
+mv "$palm_integration_dir/tests.bak" "${palm_integration_dir}-original-tests"
+utgen analyze -p "$palm_integration_dir"
+
+utgen gen -p "$palm_integration_dir" --integration --requirement --context \
+  --functions-file "$palm_repo/examples/bytes-smoke-integration-2.txt" --max-requests 8
+utgen fix -p "$palm_integration_dir" --integration \
+  --functions-file "$palm_repo/examples/bytes-smoke-integration-2.txt" --max-requests 8
 ```
 
 Integration mode generates files under the target's `tests/` directory after filtering functions using the analysis visibility flag and checking compilation. Pass `--integration` to `fix` as well to repair and evaluate candidates in integration-test targets. Imports and helpers stay with each candidate, and both combined and per-candidate coverage retain integration scope. Keep the same function selection for both commands; mixing cached generation modes is rejected.
+
+The limits above allow up to eight request attempts for generation and eight for repair, including retries. Inspect a failed command before continuing; rerunning a command starts a new request budget. The original integration tests are preserved beside the working copy so this trial evaluates only the selected candidates. If `tests.bak/` remains inside the crate instead, PALM also evaluates the original integration tests for comparison, independently of the function list.
 
 ### Results
 

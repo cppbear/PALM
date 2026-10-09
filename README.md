@@ -84,7 +84,7 @@ Generation or repair completing does not mean every candidate passes. Inspect bo
 | [focxt/call_chain](focxt/call_chain/README.md) | Extract calls and type dependencies through `cargo call-chain`. |
 | [utgen](utgen/README.md) | Generate tests, check compilation, repair tests, and collect coverage. |
 | [build-utils](build-utils/README.md) | Configure the compiler library search path during builds. |
-| [examples](examples/README.md) | The minimal fixture, bundled bytes target, and usage instructions. |
+| [examples](examples/README.md) | Minimal and mixed-target fixtures, the bundled bytes target, and scoped trial instructions. |
 | `docker/` | Container build and run scripts. |
 | [docs](docs/README.md) | Technical guide, validation guides, and ASE 2025 materials. |
 
