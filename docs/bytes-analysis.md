@@ -23,7 +23,7 @@ The script prints its temporary working directory and finishes with `All bytes a
 | Source identity | Exported function code matches its source location, accounting for brinfo's indentation normalization. |
 | Method identity | Distinct generic trait implementations, reference receivers, default methods, and recoverable macro-generated methods retain the correct bodies and impl headers. Inactive `cfg` alternatives do not replace active methods. |
 | Constructor context | Constructors returning `Self` or the concrete impl type retain their bodies, including the checked generic and macro-generated cases. Unrelated methods remain subject to context trimming. |
-| Function lists | The checked-in two- and eight-function selections match the analysis index and their expected representative condition chains. |
+| Function lists | The unit-mode `bytes-smoke-2.txt` and `bytes-smoke-8.txt` selections match the analysis index and their expected representative condition chains. This script does not check the separate integration or mixed-target trial lists. |
 | Source preservation | Analysis leaves the prepared sources and manifest unchanged. |
 
 ## Logs and Timings

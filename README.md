@@ -2,15 +2,59 @@
 
 [![Build and test](https://github.com/cppbear/PALM/actions/workflows/ci.yml/badge.svg)](https://github.com/cppbear/PALM/actions/workflows/ci.yml)
 
-PALM combines program analysis and large language models to generate Rust unit tests. It extracts path constraints and function context, generates candidates, repairs compilation errors, and reports test results and coverage with test code excluded.
+PALM generates Rust tests by combining program analysis with large language models. It extracts path constraints and code context, generates candidates, repairs compilation errors, and reports execution results and coverage with test code excluded.
 
-This is the maintained implementation of ***PALM: Synergizing Program Analysis and LLMs to Enhance Rust Unit Test Coverage***, published at ASE 2025. The repository includes changes made after the paper's experiments.
+This is the maintained implementation of ***PALM: Synergizing Program Analysis and LLMs to Enhance Rust Unit Test Coverage***, published at ASE 2025. The current code includes changes made after the paper's experiments.
 
-[Paper](https://doi.org/10.1109/ASE63991.2025.00223) · [Preprint](https://arxiv.org/abs/2506.09002) · [中文技术指南](docs/palm-rust-unit-test-generation.md) · [CLI reference](utgen/README.md) · [Citation](#citation)
+[Quick start](#quick-start) · [Examples](examples/README.md) · [CLI reference](utgen/README.md) · [中文技术指南](docs/palm-rust-unit-test-generation.md) · [Paper](https://doi.org/10.1109/ASE63991.2025.00223) · [Preprint](https://arxiv.org/abs/2506.09002)
+
+## What PALM does
+
+- Extracts representative path constraints and the focal function's dependencies for model prompts.
+- Generates unit tests or integration tests, with explicit function selection and request budgets.
+- Uses compiler diagnostics to repair candidates that do not compile.
+- Reports compilation, execution, and coverage results for each focal function, preserving library/binary ownership.
+
+## How it works
+
+```mermaid
+flowchart TD
+    A["Rust package"] --> B["Path constraints and code context"]
+    B --> C["Model-generated tests"]
+    C --> D["Compilation check"]
+    D -->|Compiler errors| E["Model repair"]
+    E --> D
+    D -->|Compiles| F["Test execution and coverage"]
+```
+
+Repair addresses compilation errors. Runtime assertion failures and candidate timeouts remain failed test outcomes.
+
+## A small example
+
+The [minimal fixture](examples/minimal/README.md) includes this function, whose [support module](examples/minimal/src/support.rs) checks whether the input is positive:
+
+```rust
+pub fn classify(value: i32) -> i32 {
+    if support::positive(value) {
+        1
+    } else {
+        0
+    }
+}
+```
+
+The offline check supplies fixed local model responses with assertions for both paths. These excerpts omit the test wrappers and helper assertions:
+
+```rust
+assert_eq!(classify(2), 1);
+assert_eq!(classify(-1), 0);
+```
+
+The same check exercises compilation repair with an intentionally invalid candidate, then validates execution, coverage, and source restoration. It uses real Rust tools but does not measure model quality. [Run it below](#quick-start), then use the [validation guide](docs/minimal-pipeline.md#outputs-and-coverage-interpretation) to interpret its output.
 
 ## Prerequisites
 
-Use a native Rust build environment with Git, [rustup](https://rustup.rs/), the stable Rust toolchain, and a C linker. The validation scripts also require Python 3.9 or later. The offline pipeline is checked on Linux CI and has been exercised on macOS with Apple Silicon.
+Use a native build environment with Git, [rustup](https://rustup.rs/), stable Rust, a C linker, and Python 3.9 or later for the validation scripts. Tool and dependency downloads may require network access.
 
 1. Install the pinned analysis toolchain and components:
 
@@ -25,7 +69,7 @@ Use a native Rust build environment with Git, [rustup](https://rustup.rs/), the 
    cargo +stable install cargo-llvm-cov --version 0.6.16 --locked
    ```
 
-Use the same nightly toolchain for the target crate. The supported end-to-end workflow operates on one standalone crate at a time; analysis handles `lib` and `bin` targets. Building, installation, and the offline checks do not require model credentials.
+Use the same nightly for the target package. `rust-analyzer` provides editor support; compiler analysis uses components such as `rustc-dev`. Building, installation, and the offline checks need no model credentials.
 
 ## Quick start
 
@@ -38,85 +82,90 @@ cargo build --workspace --locked
 python3 scripts/check_minimal.py
 ```
 
-The script uses fixed responses from a local HTTP server and real analysis, compilation, repair, and coverage tools. It works in temporary copies, prints their location, and finishes with `Minimal analysis/generation/repair/coverage checks passed.` The check verifies pipeline behavior; it does not measure model quality. See [minimal pipeline validation](docs/minimal-pipeline.md) for the checked outcomes and output files.
+The script works in temporary copies, prints their location, and finishes with:
 
-For model-based generation, install the tools below and follow the [two-function trial](examples/README.md#prepare-a-small-model-trial). That walkthrough uses a working copy, an explicit function list, and separate generation and repair request budgets.
+```text
+Minimal analysis/generation/repair/coverage checks passed.
+```
+
+See [minimal pipeline validation](docs/minimal-pipeline.md) for the checked scenarios. For a real model, install the tools below, [select a runtime configuration](utgen/README.md#prerequisites), and follow a [bounded example](examples/README.md).
 
 ## Installation
 
-No model configuration is needed to build or install the tools. `utgen gen` and `utgen fix` load configuration at runtime; changing the API address, key, or model takes effect on the next command without rebuilding.
-
-From the repository root, run:
+From the repository root:
 
 ```sh
 ./install.sh
 ```
 
-The script installs `brinfo`, `focxt/call_chain`, `focxt`, and `utgen`. It locates the repository from its own path, so it can also be invoked from another directory. To select tools, use `./install.sh brinfo utgen`; `./install.sh --help` lists the options. Cargo diagnostics remain visible and installation stops on the first failure. Ensure that the installation directory, typically `$HOME/.cargo/bin`, is in `PATH`.
+This installs brinfo, call_chain, focxt, and utgen. Ensure Cargo's binary directory, typically `$HOME/.cargo/bin`, is in `PATH`. The installer also works from another directory; `./install.sh --help` lists tool selection options. See [build and installation checks](docs/build-validation.md) for verification and the component READMEs below for individual installation commands.
 
-Alternatively, install each tool from the repository root:
-
-```sh
-cargo install --path brinfo --locked
-cargo install --path focxt/call_chain --locked
-cargo install --path focxt --locked
-cargo install --path utgen --locked
-```
+Model configuration is loaded at runtime by `gen` and `fix`. Changing the API address, key, or model takes effect on the next command without rebuilding.
 
 ## Workflow
 
-To measure existing tests before preprocessing, run `utgen coverage -p <original-crate-copy>`. It runs tests once, excludes test code from coverage, and writes `coverage.xml` and `coverage.json` without model configuration. Keep this baseline copy separate from the generation copy.
+Use a fresh working copy of the target package: preprocessing changes its source and test layout, and generation may add a test dependency.
 
-On a fresh working copy of a standalone crate, run `utgen pre-process -p <target-crate-path>` before `utgen analyze -p <target-crate-path>`. Analysis clears Cargo's check cache, runs brinfo and focxt, and verifies their outputs. It rejects existing `brinfo/` or `focxt/` directories so previous analysis results cannot be mixed into the run.
+1. Run `utgen pre-process`, then `utgen analyze` on that copy.
+2. Generate candidates with `utgen gen --requirement --context`, using a function list and request cap for an initial trial.
+3. Run `utgen fix` with the same function list and mode, then inspect request reports and per-function statistics.
 
-Then use `utgen gen` and `utgen fix` for generation and compilation repair. Pass `--requirement --context` to `utgen gen` to include path constraints and focal context. For integration tests, pass `--integration` to both `gen` and `fix`. Preprocessing and test checks modify the target tree; use a working copy of the target project.
+Use `--integration` on both generation and repair commands for integration tests. The [examples](examples/README.md) provide complete commands for small unit, integration, and mixed-target trials. A completed command does not imply every candidate passed; [result fields](utgen/README.md#output) report the outcomes.
 
-Start with the [minimal pipeline check](docs/minimal-pipeline.md), which uses fixed local model responses and verifies analysis, generation, repair, source restoration, and coverage. The [bytes analysis check](docs/bytes-analysis.md) validates analysis on the larger bundled target without a model service. For model-based generation and repair, follow the [small model trial](examples/README.md#prepare-a-small-model-trial) using an explicit function list and separate request limits, then inspect the request reports and test statistics. See [utgen usage](utgen/README.md) for command details and supported scope.
+To measure existing tests, run `utgen coverage -p <original-crate-copy>` before preprocessing, on a separate copy. It needs no model configuration and retains `coverage.xml` and `coverage.json`.
 
-Generation or repair completing does not mean every candidate passes. Inspect both request reports and test statistics. Repair addresses compilation errors; runtime failures and five-second candidate timeouts remain failed test outcomes.
+## Supported scope
+
+| Area | Current scope |
+| --- | --- |
+| Target package | One standalone Cargo package with ordinary lib/bin targets, including custom names and entry files. The complete workflow does not support multi-package workspaces. |
+| Test modes | Unit tests use the recorded lib/bin target. Function-level integration tests require a library and compile-check external access. |
+| Shared definitions | A definition compiled into both lib and bin is represented by lib. This does not test every binary variant. |
+| Rust features | Analysis follows the active build configuration. There is no general macro expansion or automatic feature-matrix exploration. |
+| Toolchain | `nightly-2025-03-19` and cargo-llvm-cov `0.6.16`. |
+| Platforms | Full offline suite on Linux CI; exercised locally on macOS Apple Silicon. Windows has not been validated. |
+
+See the [CLI reference](utgen/README.md) for source-processing boundaries, cache compatibility, timeouts, and coverage interpretation.
 
 ## Project Structure
 
 | Directory | Purpose |
 | --- | --- |
-| [brinfo](brinfo/README.md) | Extract function condition chains from HIR and MIR. |
-| [focxt](focxt/README.md) | Construct code context for each focal function. |
-| [focxt/call_chain](focxt/call_chain/README.md) | Extract calls and type dependencies through `cargo call-chain`. |
-| [utgen](utgen/README.md) | Generate tests, check compilation, repair tests, and collect coverage. |
-| [build-utils](build-utils/README.md) | Configure the compiler library search path during builds. |
-| [examples](examples/README.md) | Minimal and mixed-target fixtures, the bundled bytes target, and scoped trial instructions. |
+| [brinfo](brinfo/README.md) | Extract condition chains from HIR and MIR. |
+| [focxt](focxt/README.md) | Construct context for each focal function. |
+| [focxt/call_chain](focxt/call_chain/README.md) | Extract calls and type dependencies. |
+| [utgen](utgen/README.md) | Generate, compile-check, repair, and evaluate tests. |
+| [build-utils](build-utils/README.md) | Configure compiler library search paths during builds. |
+| [examples](examples/README.md) | Minimal and mixed-target fixtures, plus the bundled bytes target. |
+| [docs](docs/README.md) | Technical, usage, validation, and research documentation. |
 | `docker/` | Container build and run scripts. |
-| [docs](docs/README.md) | Technical guide, validation guides, and ASE 2025 materials. |
 
 ## Docker
 
-Run `docker/docker-build` to prepare an image with the pinned analysis toolchain, Python, and cargo-llvm-cov. Both Docker scripts locate the repository from their own paths. Mirrors can be configured in `docker/Dockerfile` if needed.
+Run `docker/docker-build`, then `docker/docker-run` to open a shell with the repository mounted at `/home/palm/palm`. Follow [Installation](#installation) inside the container. The image includes the pinned compiler and coverage tools; files written in the mounted repository remain on the host after the container exits.
 
-Run `docker/docker-run` to open a shell in the repository mounted at `/home/palm/palm`, then follow [Installation](#installation). The container is removed when the shell exits; files written in the mounted repository remain on the host. Use working copies of target crates as described above.
-
-The [Docker CI workflow](.github/workflows/docker.yml) checks image construction and tool installation when Docker or build-environment files change. Its manual `full_pipeline` option also runs the minimal offline pipeline inside the container; see [CI scope](docs/build-validation.md#ci-and-further-checks).
+Both scripts locate the repository from their own paths. See [Docker validation and CI scope](docs/build-validation.md#ci-and-further-checks) for the checked environment and optional container pipeline check.
 
 ## Development checks
-
-From the repository root, using the pinned toolchain:
 
 ```sh
 cargo build --workspace --locked
 cargo test --workspace --locked
 ```
 
-Default tests use local model-response fixtures and do not contact a model service. The real-service test is opt-in; see [utgen testing](utgen/README.md#testing). Dependency downloads may still require network access. See [build and installation checks](docs/build-validation.md) for commands and CI scope.
-
-The [GitHub Actions workflow](.github/workflows/ci.yml) runs on pull requests and pushes to main, canceling superseded runs for the same PR or branch. Changes limited to READMEs and the selected documentation paths under `docs/` receive a lightweight patch whitespace check. Other changes and manual workflow runs execute the full offline suite on Linux.
+Default checks use local model responses. See [CONTRIBUTING.md](CONTRIBUTING.md) for the regression check relevant to a change, and [build validation](docs/build-validation.md) for CI scope. The real-model request test is [explicitly opt-in](utgen/README.md#testing).
 
 ## Contributing
 
-Bug reports and focused pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, relevant checks, and the information to include in a report.
+Bug reports and focused pull requests are welcome. Include a reproducer and relevant validation as described in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Documentation
 
-- [Technical guide in Chinese](docs/palm-rust-unit-test-generation.md): architecture, data flow, and usage.
-- [ASE 2025 materials](docs/ase2025/README.md): the original poster and presentation.
+- [Examples](examples/README.md): bounded unit, integration, and mixed-target trials.
+- [Technical guide in Chinese](docs/palm-rust-unit-test-generation.md): architecture, data flow, and implementation.
+- [CLI reference](utgen/README.md): configuration, commands, and outputs.
+- [Research materials](docs/ase2025/README.md): conference poster and presentation, with revision notes.
+- [Documentation index](docs/README.md): all guides and validation entry points.
 
 ## Citation
 

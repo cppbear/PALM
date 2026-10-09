@@ -30,7 +30,7 @@ Mixed packages use `utgen analyze`, which selects each Cargo entry and preserves
 
 ## Output
 
-Paths are relative to the target crate:
+For single-target analysis, paths are relative to the target crate:
 
 | Path | Contents |
 | --- | --- |
@@ -40,6 +40,8 @@ Paths are relative to the target crate:
 | `focxt/new_callsandtypes/<encoded>.json` | Calls and types expanded during context construction. |
 
 Additional text files under `focxt/` describe parsed declarations and module trees for debugging. Generation also requires [brinfo](../brinfo/README.md) output from the same prepared source.
+
+For mixed packages, `utgen analyze` writes the selected focal contexts and combined `impl_informations.json` at the paths above. Raw contexts, calls/types, and debug files stay under `brinfo/targets/<kind>/<target-name>/focxt/`; they are not copied into the top-level `focxt/`. Use each target's raw index to locate its artifacts: raw encoded identifiers differ from the combined identifiers.
 
 ## Scope and checks
 
