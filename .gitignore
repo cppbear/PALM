@@ -2,4 +2,5 @@
 target/
 *.txt
 !/examples/bytes-smoke-*.txt
+!/examples/mixed-smoke-*.txt
 api.json

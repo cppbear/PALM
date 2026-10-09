@@ -1,0 +1,4 @@
+lib:mixed_fixture::mixed_fixture::shared::classify
+lib:mixed_fixture::mixed_fixture::helper
+bin:mixed_fixture::mixed_fixture::helper
+bin:mixed_fixture::mixed_fixture::bin_only
