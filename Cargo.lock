@@ -2073,6 +2073,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "shlex",
  "simplelog",
  "strfmt",
  "syn",

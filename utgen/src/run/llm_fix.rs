@@ -594,6 +594,7 @@ pub async fn llm_fix(
             "--tasks is outside the supported positive range",
         ));
     }
+    super::validate_targets(&project_path, &work_path, functions, integration)?;
     let parent_dir = project_path.join("utgen/generation/llm_fix");
     let map_path = work_path.join("brinfo/name_map.json");
     let nmap: HashMap<String, String> =

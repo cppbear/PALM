@@ -1,5 +1,6 @@
 static TIMEOUT_DERIVE: &str = "#[timeout(5000)]";
 mod coverage;
+mod coverage_baseline;
 mod coverage_json;
 pub(crate) mod integration;
 mod llm_fix;
@@ -15,6 +16,7 @@ pub use run::gen_test_rate;
 pub use run::gen_test_rate_aggregated;
 
 pub use coverage::collect_coverage;
+pub(crate) use coverage_baseline::validate_targets;
 
 /// Assemble a statistics test with the shared execution limit.
 fn timed_test(signature: &str, attrs: &[String], body: &[String]) -> Vec<String> {

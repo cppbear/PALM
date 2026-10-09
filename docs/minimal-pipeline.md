@@ -17,6 +17,7 @@ Run the related checks when changing coverage/preprocessing or task scheduling:
 
 ```sh
 python3 scripts/check_coverage.py
+cargo test -p utgen --locked coverage_baselines_match_test_build_modes -- --ignored
 python3 scripts/check_tasks.py
 ```
 
@@ -41,7 +42,8 @@ The default binary directory is `target/debug`. The coverage tool must be availa
 | Coverage | Excludes test bodies and test-only helpers, preserves production coverage, and executes tests once when exporting XML and JSON. |
 | Cleanup | Restores sources after the covered success, assertion-failure, compilation-failure, and report-export-failure cases. |
 | Candidate timeout | Ordinary and `should_panic` infinite loops count as failures; an expected panic and a later ordinary test pass in unit and integration statistics. |
-| Statistics | Oracle groups count once across multiple candidates; pass results match complete test names; an all-compilation-failure result reports unavailable coverage without exporting an empty run. |
+| Statistics | Oracle groups count once across multiple candidates; pass results match complete test names; all-compilation-failure results retain a zero-hit denominator without a synthetic candidate. A passing integration candidate that does not call the focal function has zero focal coverage. |
+| Coverage baselines | No-test unit/library and binary harnesses; ordinary-library integration maps; conditional compilation, generics, no-map targets, per-target reuse, separation from real profiles, and source/helper restoration after build failure. |
 | Integration repair | Repairs alias/trait imports, helpers, and test bodies in integration targets; keeps sibling candidates independent; checks cached repair, mode mismatch, unselected targets, and cleanup after request failure. |
 | Integration directories | Original and generated tests coexist after normal runs and cached reruns; original-test compilation failure restores both directories; an existing staging directory is preserved and reported. |
 
@@ -60,6 +62,8 @@ The minimal check's temporary directory contains `logs/`, separate `original/` a
 `check_coverage.py` checks existing coverage attributes, conditional attributes with Cargo features enabled and disabled, test-only functions/methods/impls, file-level test modules, and expression fragments used by `include!`. Integration tests exercise both ordinary-library and test-harness compilation. The cases verify execution outcomes, production-only coverage, source restoration, and preprocessing offsets.
 
 Explicit `coverage(on)` is respected. Expression fragments are preserved; the checks do not provide general macro expansion or infer that arbitrary unmarked helpers are test-only. See the [coverage reference](../utgen/README.md#coverage-of-existing-tests) for supported scope.
+
+The baseline test is normally ignored because it needs the pinned coverage and LLVM tools. The explicit command above and Linux CI run it after installing those tools. It compares ordinary-library baseline maps with a real integration run, checks that a binary's `main` and existing test bodies never run during baseline collection, and removes its temporary fixtures afterward. Per-function `coverage_available=false` values must be excluded from coverage aggregates; they do not mean zero coverage of a known denominator.
 
 ## Task Scheduling Regression
 

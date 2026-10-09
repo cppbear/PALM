@@ -319,6 +319,9 @@ fn body_case() {
                        for _, branches in classify['codes_branches_covered'] for branch in branches), classify
         double = json.loads((target / f"utgen/result/{names['palm_fixture::nested::double']}.json").read_text())
         assert double['tests_compiled'] == 0 and double['tests'] == 1, double
+        assert double['coverage_available'] and double['lines'] == 3, double
+        assert double['lines_covered'] == double['branches_covered'] == 0, double
+        assert double['codes_lines_covered'] == double['codes_branches_covered'] == [], double
         assert not list((target / 'src').rglob('*.bak'))
 
         # Replay cached candidates on one function: ordinary and should_panic
@@ -371,7 +374,7 @@ fn body_case() {
         assert snapshot(target) == prepared
 
         # Multiple candidates belong to one oracle; all failed compilation is
-        # still a valid result and must not attempt to export empty coverage.
+        # still a valid result with a zero-hit ordinary-library denominator.
         data['integration'] = True
         answer['common'] = []
         answer['chain_tests'] = [dict(
@@ -396,9 +399,25 @@ fn body_case() {
         assert result['tests'] == result['oracles'] == 1, result
         assert result['tests_compiled'] == result['tests_run'] == result['tests_passed'] == 0, result
         assert result['oracles_compiled'] == result['oracles_run'] == result['oracles_passed'] == 0, result
-        assert not result['coverage_available'], result
-        assert result['lines'] == result['branches'] == 0, result
-        assert result['codes_lines_covered'] == [], result
+        assert result['coverage_available'], result
+        assert result['lines'] == 5 and result['branches'] == 2, result
+        assert result['lines_covered'] == result['branches_covered'] == 0, result
+        assert result['codes_lines_covered'] == result['codes_branches_covered'] == [], result
+        test['codes'] = [['{', 'assert_eq!(palm_fixture::nested::double(2), 4);', '}']]
+        test['can_compile'] = [{'Ok': None}]
+        candidate.write_text(json.dumps(data))
+        run('integration-no-focal-call', command)
+        result = json.loads((target / f'utgen/result/{names[selected]}.json').read_text())
+        assert result['tests_run'] == result['tests_passed'] == 1, result
+        assert result['coverage_available'] and result['lines'] == 5 and result['branches'] == 2, result
+        assert result['lines_covered'] == result['branches_covered'] == 0, result
+        test['codes'] = [['{', 'assert_eq!(2 + 2, 4);', '}']]
+        candidate.write_text(json.dumps(data))
+        run('integration-no-library-call', command)
+        result = json.loads((target / f'utgen/result/{names[selected]}.json').read_text())
+        assert result['tests_run'] == result['tests_passed'] == 1, result
+        assert result['coverage_available'] and result['lines'] == 5 and result['branches'] == 2, result
+        assert result['lines_covered'] == result['branches_covered'] == 0, result
         shutil.rmtree(target / 'tests')
         assert snapshot(target) == prepared
 
