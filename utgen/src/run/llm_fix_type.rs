@@ -24,6 +24,7 @@ struct Children {
 
 #[derive(Debug, Clone, Deserialize)]
 struct Message {
+    level: String,
     spans: Vec<Span>,
     children: Vec<Children>,
     rendered: String,
@@ -41,6 +42,9 @@ pub struct CompilerMessage {
 }
 
 impl CompilerMessage {
+    pub fn is_error(&self) -> bool {
+        self.message.level == "error"
+    }
     pub fn has_spans(&self) -> bool {
         return self.message.has_spans();
     }

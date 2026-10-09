@@ -263,20 +263,27 @@ pub(crate) fn collect_coverage_for_tests(
     json: bool,
     targets: &[String],
 ) -> io::Result<Output> {
+    let mut args = Vec::new();
+    if targets.is_empty() {
+        args.push("--tests");
+    } else {
+        for target in targets {
+            args.extend(["--test", target.as_str()]);
+        }
+    }
+    collect_coverage_args(work_dir, json, &args)
+}
+
+pub(crate) fn collect_coverage_args(
+    work_dir: &Path,
+    json: bool,
+    target_args: &[&str],
+) -> io::Result<Output> {
     let canonical = work_dir.canonicalize()?;
     let work_dir = canonical.as_path();
     let metadata = project_metadata(work_dir)?;
     with_test_exclusions(work_dir, &metadata, || {
-        // The first command uses llvm-cov's default cleanup. --no-report would
-        // imply --no-clean and mix profiles from different generated candidates.
-        let mut args = Vec::new();
-        if targets.is_empty() {
-            args.push("--tests");
-        } else {
-            for target in targets {
-                args.extend(["--test", target.as_str()]);
-            }
-        }
+        let mut args = target_args.to_vec();
         args.extend([
             "--ignore-run-fail",
             "--branch",

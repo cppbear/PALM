@@ -34,6 +34,8 @@ async fn generation_task(
     tx: mpsc::Sender<TestGenInfo>,
 ) -> io::Result<()> {
     let name = brdata.name.clone();
+    let id = brdata.id.clone();
+    let target = brdata.target.clone();
     info!("Generating tests for {}", brdata.name);
     let test_gen_info = generation_tests(
         &llm,
@@ -48,8 +50,10 @@ async fn generation_task(
         oracle,
     )
     .await;
-    let test_gen_info =
+    let mut test_gen_info =
         test_gen_info.ok_or_else(|| io::Error::other(format!("Generation failed for {name}")))?;
+    test_gen_info.id = id;
+    test_gen_info.target = target;
     tx.send(test_gen_info)
         .await
         .map_err(|_| io::Error::other("Generation result channel closed"))?;
@@ -74,14 +78,16 @@ pub async fn gen_tests_project(
     }
     validate_analysis(project_dir, work_dir)?;
     crate::run::validate_targets(project_dir, work_dir, functions, integration)?;
+    let available = crate::target::targets(work_dir)?;
     let saved_dir = project_dir.join("utgen/generation/pre_fix");
     if saved_dir.is_dir() {
         for entry in fs::read_dir(saved_dir)? {
             let path = entry?.path();
             if path.is_file() {
                 let info = TestGenInfo::from_json(&path);
+                let target = crate::target::resolve_from(&available, info.target.as_ref())?;
                 if functions.contains(info.get_name()) {
-                    info.check_mode(integration)?;
+                    if !integration || target.kind == "lib" { info.check_mode(integration)?; }
                 }
             }
         }
@@ -103,23 +109,25 @@ pub async fn gen_tests_project(
             let entry = entry.unwrap();
             let brdata_path = entry.path();
             if brdata_path.is_file() {
-                let brdata: BrData =
+                let mut brdata: BrData =
                     serde_json::from_str(&fs::read_to_string(&brdata_path).unwrap()).unwrap();
-                if !functions.contains(&brdata.name) {
+                let id = if brdata.id.is_empty() { brdata.name.clone() } else { brdata.id.clone() };
+                if !functions.contains(&id) {
                     continue;
                 }
                 // if brdata.size.min_set < 2 {
                 //     info!("{} has less than 2 condition chains in min_set", brdata.name);
                 //     continue;
                 // }
-                if integration && !brdata.visible {
+                brdata.target = Some(crate::target::resolve_from(&available, brdata.target.as_ref())?);
+                if integration && (brdata.target.as_ref().unwrap().kind != "lib" || !brdata.visible) {
                     // info!("{} is not public", brdata.name);
                     continue;
                 }
-                let encoded_name = nmap.get(&brdata.name).cloned().unwrap();
+                let encoded_name = nmap.get(&id).cloned().unwrap();
                 let mut focxt_encoded_name = String::new();
                 for focxt_name_information in focxt_name_informations.iter() {
-                    if focxt_name_information.full_name == brdata.name {
+                    if (if focxt_name_information.id.is_empty() { &focxt_name_information.full_name } else { &focxt_name_information.id }) == &id {
                         focxt_encoded_name = focxt_name_information.encoded_name.clone();
                         break;
                     }

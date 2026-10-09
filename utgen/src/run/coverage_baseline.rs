@@ -21,34 +21,31 @@ pub(crate) fn validate_targets(
     functions: &FunctionSelection,
     integration: bool,
 ) -> io::Result<()> {
-    let metadata = project_metadata(work_dir)?;
-    if integration
-        && !metadata
-            .root_package()
-            .unwrap()
-            .targets
-            .iter()
-            .any(|target| target.is_kind(TargetKind::Lib))
-    {
+    let available = crate::target::targets(work_dir)?;
+    if integration && !available.iter().any(|target| target.kind == "lib") {
         return Err(io::Error::other(
             "Function-level integration tests require a library target",
         ));
     }
+    let mut omitted = 0;
     for entry in fs::read_dir(work_dir.join("brinfo/brdata"))? {
         let path = entry?.path();
-        if !path.is_file() {
-            continue;
-        }
+        if !path.is_file() { continue; }
         let data: BrData = serde_json::from_slice(&fs::read(path)?)?;
-        if functions.contains(&data.name) && (!integration || data.visible) {
-            select_target(
-                &metadata,
-                &data.name,
-                &project_dir.join(data.loc.get_file()),
-                integration,
-            )?;
+        let id = if data.id.is_empty() { &data.name } else { &data.id };
+        if !functions.contains(id) { continue; }
+        let target = crate::target::resolve_from(&available, data.target.as_ref())?;
+        if integration && target.kind != "lib" {
+            if functions.names().is_some() {
+                return Err(io::Error::other(format!("Function {id} belongs to a binary; integration mode requires library functions")));
+            }
+            omitted += 1;
         }
     }
+    if omitted > 0 {
+        log::info!("Integration mode omits {omitted} binary focal functions");
+    }
+
     Ok(())
 }
 
@@ -122,7 +119,34 @@ impl BaselineCache {
         begin: i32,
         end: i32,
     ) -> io::Result<FunctionMapping> {
-        let target = select_target(&self.metadata, name, file, self.integration)?.clone();
+        self.mapping_for_target(work_dir, name, file, begin, end, None)
+    }
+
+    pub fn mapping_for_target(
+        &mut self,
+        work_dir: &Path,
+        name: &str,
+        file: &Path,
+        begin: i32,
+        end: i32,
+        recorded: Option<&crate::target::TargetInfo>,
+    ) -> io::Result<FunctionMapping> {
+        let target = if let Some(recorded) = recorded {
+            self.metadata
+                .root_package()
+                .unwrap()
+                .targets
+                .iter()
+                .find(|t| {
+                    t.name == recorded.name
+                        && t.kind.iter().any(|kind| kind.to_string() == recorded.kind)
+                })
+                .ok_or_else(|| io::Error::other("Recorded coverage target is missing"))?
+                .clone()
+        } else {
+            select_target(&self.metadata, name, file, self.integration)?.clone()
+        };
+
         let key = format!("{:?}:{}", target.kind, target.name);
         if !self.reports.contains_key(&key) {
             log::info!(

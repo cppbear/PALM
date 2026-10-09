@@ -18,13 +18,15 @@ focxt invokes `cargo call-chain` at runtime, so install [call_chain](call_chain/
 
 Use a working copy of a standalone crate with the same pinned toolchain. For the test-generation workflow, [preprocess and analyze with utgen](../utgen/README.md#analysis): it runs both brinfo and focxt and validates their outputs.
 
-To construct context directly from prepared source:
+For a single-target package, construct context directly from prepared source:
 
 ```sh
 focxt --crate /absolute/path/to/target-crate
 ```
 
 `-c` is the short form of `--crate`. focxt runs `cargo clean` and `cargo call-chain` inside the target before building context; running call-chain separately is unnecessary for this command. Start with a fresh working copy when repeating analysis, since build-cache cleanup does not remove previous context artifacts.
+
+Mixed packages use `utgen analyze`, which selects each Cargo entry and preserves separate context data. Binary contexts keep local definitions separate from the package library; referenced library functions and types are included in a labeled dependency section. Library preference applies to the final focal list, without discarding binary dependency information.
 
 ## Output
 

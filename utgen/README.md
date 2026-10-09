@@ -110,7 +110,7 @@ For multiple crates, use explicit work-directory paths:
 utgen pre-process -p <project-root> -w <crate-path-1> -w <crate-path-2>
 ```
 
-The preprocessor removes modules whose `cfg` predicates are provably disabled without `test`, functions with `test` or namespaced `test` attributes, test-only impls/methods, and the contents of files with an inner `#![cfg(test)]` attribute. It preserves production predicates such as `cfg(not(test))` and treats unknown feature/target predicates conservatively. Source files retain their line breaks and byte offsets. UTF-8 character columns can change inside blanked ranges; perform analysis after preprocessing. Existing `tests.bak` is never overwritten. Non-entry files that parse as expressions (for example, `include!("value.rs")` fragments) are left unchanged; other parse failures remain errors. Cargo metadata identifies target entry files, which must parse as complete Rust files. There is no general reverse-preprocessing command.
+The preprocessor visits `src/` and declared lib/bin entry files. It removes modules whose `cfg` predicates are provably disabled without `test`, functions with `test` or namespaced `test` attributes, test-only impls/methods, and the contents of files with an inner `#![cfg(test)]` attribute. It preserves production predicates such as `cfg(not(test))` and treats unknown feature/target predicates conservatively. Source files retain their line breaks and byte offsets. UTF-8 character columns can change inside blanked ranges; perform analysis after preprocessing. Existing `tests.bak` is never overwritten. Non-entry files that parse as expressions (for example, `include!("value.rs")` fragments) are left unchanged; other parse failures remain errors. Cargo metadata identifies target entry files, which must parse as complete Rust files. There is no general reverse-preprocessing command.
 
 ### Analysis
 
@@ -120,7 +120,11 @@ utgen analyze -p <target-crate-path>
 
 The target must have `Cargo.toml` and `src/`, with no existing `brinfo/` or `focxt/` directory. Use a fresh prepared copy when repeating analysis. Tool failures return a nonzero exit status. No model configuration is needed.
 
-For manual analysis, run `cargo clean`, `cargo brinfo`, then `focxt -c <target-crate-path>` in the prepared crate. A prior `cargo check` can otherwise prevent the compiler wrapper from running.
+Analysis enumerates the package's ordinary library and binary targets using Cargo metadata, including custom target names and entry paths. Raw results stay separate under `brinfo/targets/<kind>/<name>/` for mixed packages. The final branch/context indices retain every target's own definitions and prefer the library when the same source definition also occurs in a binary. Same-name definitions in different locations remain separate; definitions shared only between binaries remain associated with each binary. The selected library version does not imply that every binary variant was tested.
+
+Mixed-target index keys include the target, for example `lib:demo::demo::shared::parse`. `--functions-file` accepts these keys, or the original Rust path when it identifies exactly one selected function. Ambiguous paths fail with the available qualified keys. Single-target keys and encoded filenames retain their existing form. Dependency contexts keep their actual origin even when a shared binary definition is omitted from the focal list.
+
+For manual single-target analysis, run `cargo clean`, `cargo brinfo`, then `focxt -c <target-crate-path>` in the prepared crate. A prior `cargo check` can otherwise prevent the compiler wrapper from running. Use `utgen analyze` for mixed packages; unscoped low-level invocations reject multiple targets rather than overwrite their artifacts.
 
 ### Coverage of existing tests
 
@@ -149,10 +153,10 @@ utgen gen -p <target-crate-path> --requirement --context
 | `-r, --requirement` | Generate for each representative condition chain. Default: off. |
 | `-c, --context` | Include the focal function's context in the prompt. Default: off. |
 | `-o, --oracle` | Use separate input-range, test-prefix, and oracle generation. Default: off; otherwise generate complete tests directly. |
-| `-i, --integration` | Generate integration tests under `tests/`, using the analysis visibility flag to select functions and compilation checks to filter candidates. Default: off. |
+| `-i, --integration` | Generate integration tests under `tests/`, selecting library functions with the analysis visibility flag and checking candidate compilation. Default: off. |
 | `-t, --tasks` | Default: 4. Maximum active focal-function generation jobs; must be positive. |
 | `--request-timeout` | Default: 180 seconds per model request attempt; also available for `fix`. Must be positive. |
-| `--functions-file` | Optional path to exact full analysis-index names, one per line; also available for `fix`. |
+| `--functions-file` | Optional path to analysis-index keys or unambiguous Rust paths, one per line; also available for `fix`. |
 | `--max-requests` | Optional positive request-attempt limit for the whole command, including retries; also available for `fix`. Default: no overall limit. |
 
 Generation validates the branch index, context index, context files, and source paths before modifying the target. Missing or inconsistent artifacts are errors. A failed generation task is reported instead of being silently lost before statistics. `--tasks 0` is rejected.
@@ -220,7 +224,11 @@ Per-function results include `coverage_available`. When it is false, the numeric
 
 When candidate coverage has no focal-function mapping, statistics collect a zero-hit baseline for the selected Cargo target. Unit mode builds the `--lib` or `--bin` test harness with every test filtered out; it does not insert an empty test. Integration mode obtains mappings from the ordinary library artifact, using a temporary integration harness without executing tests. Thus `cfg(not(test))` code can contribute to the integration denominator while being absent in unit mode. Compilation and tool failures remain errors. Baselines add no candidate/oracle counts or `codes_*_covered` entries; their profiles stay separate from real test hits. Parsed baselines are reused only within the current statistics invocation.
 
-Function-level integration mode requires a library target. Target selection currently uses the analyzed crate name and, when needed, the source entry file. Ambiguous shared modules in same-name library/binary targets are rejected before model requests. Full mixed-target analysis requires retaining target identity in the analysis index; use a standalone library or binary working copy for those cases.
+Generated candidates and statistics carry the recorded target (`kind`, `name`, and entry `src_path`). Statistics use `function_name` as the analysis-index key and `rust_name` for the original Rust path. Unit compilation checks use `cargo test --lib/--bin <name> --no-run`; execution and coverage use that same target. Repair considers compiler errors, not ordinary warnings. The standalone `coverage` command and original-test comparison retain their package-wide scope.
+
+Function-level integration mode requires a library. Automatic selection reports omitted binary functions; explicitly selecting a binary function with `--integration` fails before model requests. Cargo may still build the package's binaries for an integration test, so binary build errors can prevent integration checks. PALM does not temporarily remove binaries from the manifest.
+
+Old single-target candidates without recorded ownership remain usable. Old mixed-target artifacts may have overwritten one another; analyze and generate in a fresh working copy instead of migrating those caches. Keep the same generation mode for repair.
 
 `tests_*` count candidates; `oracles_*` count the existing `TestInfo` groups. A group counts once if any of its candidates compiles, is registered to run, or passes, respectively. Run counts retain the existing libtest convention, including ignored tests. Integration pass outcomes match complete test names.
 

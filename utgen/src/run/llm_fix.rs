@@ -80,7 +80,7 @@ fn compiler_error_parser_from_json(work_path: &Path) -> Vec<CompilerMessage> {
         .filter_map(|s| {
             let one_json: Result<CompilerMessage, serde_json::Error> = serde_json::from_str(s);
             if let Ok(one_json) = one_json {
-                if one_json.has_spans() {
+                if one_json.is_error() && one_json.has_spans() {
                     return Some(one_json);
                 } else {
                     return None;
@@ -138,6 +138,7 @@ async fn compilation_fix_assistant_for_an_error(
     insert_kind: InsertKind,
     common: &Vec<String>,
     integration_attrs: Option<&[String]>,
+    target: Option<&crate::target::TargetInfo>,
 ) -> io::Result<(Vec<ErrorMessage>, TestCode, u32, u32)> {
     let mut iterative_time = 0;
     let mut min_error_set = compile_error_set.clone();
@@ -148,12 +149,15 @@ async fn compilation_fix_assistant_for_an_error(
     let current_error = error_message;
     let rust_assistant_prompt_json_str = include_str!("../../res/rustassistant_prompt.json");
     let rust_assistant_prompt = RustAssistantPrompt::from_json(&rust_assistant_prompt_json_str);
+    let unit_command = target
+        .map(|t| format!("cargo test {} --no-run", t.unit_args().join(" ")))
+        .unwrap_or_default();
     let preamble_prompt = rust_assistant_prompt.rustassistant_preamble.replace(
         "{cmd}",
         if integration_attrs.is_some() {
             "cargo test --test palm_candidate --no-run"
         } else {
-            "cargo test --tests"
+            &unit_command
         },
     ) + "\n";
     let error_snippet_prompt = current_error.code_snippets.clone();
@@ -236,7 +240,7 @@ async fn compilation_fix_assistant_for_an_error(
             // let _ = target_clean(&work_path);
 
             let test_type = TestType::Error;
-            run_test(project_path, work_path, test_type, false, false);
+            run_test(project_path, work_path, test_type, false, false, target);
 
             let compiler_message_set = compiler_error_parser_from_json(work_path);
 
@@ -284,6 +288,7 @@ async fn compilation_fix_assistant_for_one_fn(
     let timeout = Duration::from_secs(FIX_TIMEOUT); // Existing between-round limit; not a subprocess deadline.
 
     let mut test_gen_info = test_gen_info;
+    let target = crate::target::resolve_target(&work_path, test_gen_info.target.as_ref())?;
     let file_rela = test_gen_info.get_file();
     let file_path = project_dir.join(file_rela);
     let name = test_gen_info.get_name().to_string();
@@ -328,7 +333,7 @@ async fn compilation_fix_assistant_for_one_fn(
                         // let _ = target_clean(&work_path);
 
                         let test_type = TestType::Error;
-                        run_test(&project_dir, &work_path, test_type, false, false);
+                        run_test(&project_dir, &work_path, test_type, false, false, Some(&target));
 
                         // restore_file(&file_path);
                         let mut test_file_content = TestCode::new(&file_path, &test_code);
@@ -360,7 +365,7 @@ async fn compilation_fix_assistant_for_one_fn(
                                 compilation_fix_assistant_for_an_error(
                                     llm, random_error, &compile_error_set, &project_dir, &work_path,
                                     &file_path, &test_file_content, sig.clone(),
-                                    insert_kind, &common, None,
+                                    insert_kind, &common, None, Some(&target),
                                 ).await.map_err(|error| io::Error::other(format!(
                                     "Repair model request failed for {name}: {error}"
                                 )))?;
@@ -403,7 +408,7 @@ async fn compilation_fix_assistant_for_one_fn(
                         chain_test.repaired[num] = true;
                         // let _ = target_clean(&work_path);
 
-                        chain_test.can_compile[num] = cargo_check(&work_path);
+                        chain_test.can_compile[num] = cargo_check(&work_path, &target);
                         id += 1;
                         restore_file(Path::new(&file_path));
                         drop(restore);
@@ -528,6 +533,7 @@ async fn fix_integration_function(
                                 InsertKind::EOF,
                                 &Vec::new(),
                                 Some(&test.attrs),
+                                None,
                             )
                             .await?;
                         errors = next_errors;
@@ -595,6 +601,7 @@ pub async fn llm_fix(
         ));
     }
     super::validate_targets(&project_path, &work_path, functions, integration)?;
+    let available = crate::target::targets(&work_path)?;
     let parent_dir = project_path.join("utgen/generation/llm_fix");
     let map_path = work_path.join("brinfo/name_map.json");
     let nmap: HashMap<String, String> =
@@ -606,7 +613,8 @@ pub async fn llm_fix(
         .iter()
         .filter(|info| functions.contains(info.get_name()))
     {
-        info.check_mode(integration)?;
+        let target = crate::target::resolve_from(&available, info.target.as_ref())?;
+        if !integration || target.kind == "lib" { info.check_mode(integration)?; }
     }
     let mut test_gen_infos = get_test_gen_infos(&project_path, false);
     let saved: BTreeSet<_> = test_gen_infos.iter()
@@ -617,11 +625,7 @@ pub async fn llm_fix(
     );
     test_gen_infos.retain(|info| {
         let relative = info.get_file();
-        let in_work_dir = if project_path == work_path {
-            relative.starts_with("src")
-        } else {
-            project_path.join(relative).starts_with(&work_path)
-        };
+        let in_work_dir = project_path.join(relative).starts_with(&work_path);
         in_work_dir && functions.contains(info.get_name())
     });
     if let Some(names) = functions.names() {
@@ -633,8 +637,17 @@ pub async fn llm_fix(
             }
         }
     }
-    for info in &test_gen_infos {
-        info.check_mode(integration)?;
+    for info in &mut test_gen_infos {
+        info.target = Some(crate::target::resolve_from(
+            &available,
+            info.target.as_ref(),
+        )?);
+        if !integration || info.target.as_ref().unwrap().kind == "lib" {
+            info.check_mode(integration)?;
+        }
+    }
+    if integration {
+        test_gen_infos.retain(|info| info.target.as_ref().unwrap().kind == "lib");
     }
     if !integration {
         merge_common_in_code(&mut test_gen_infos);

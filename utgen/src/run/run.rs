@@ -78,6 +78,7 @@ pub fn run_test(
     test_type: TestType,
     is_json: bool,
     is_integration: bool,
+    target: Option<&crate::target::TargetInfo>,
 ) -> Vec<String> {
     let mut return_value: Vec<String> = Vec::new();
 
@@ -85,13 +86,16 @@ pub fn run_test(
         // println!("Running tests...");
         let output_file = File::create(work_path.join("error_output.json")).unwrap();
         Command::new("cargo")
-            .args(["test", "--tests", "--message-format", "json"])
+            .arg("test")
+            .args(target.map(|t| t.unit_args()).unwrap_or_else(|| vec!["--tests"]))
+            .args(["--no-run", "--message-format", "json"])
             .stdout(output_file)
             .current_dir(work_path)
             .output()
             .expect("Failed to run tests");
     } else {
-        let coverage_output = super::coverage::collect_coverage(work_path, is_json)
+        let args = target.map(|t| t.unit_args()).unwrap_or_else(|| vec!["--tests"]);
+        let coverage_output = super::coverage::collect_coverage_args(work_path, is_json, &args)
             .expect("Failed to collect coverage");
         if !is_integration {
             return_value = String::from_utf8_lossy(&coverage_output.stdout)
@@ -148,6 +152,9 @@ impl PartialEq for BranchCoverageInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TestRateInfo {
     pub function_name: String,
+    #[serde(default)]
+    pub rust_name: String,
+    pub target: Option<crate::target::TargetInfo>,
     pub file_path: String,
     pub work_dir: String,
     pub tests: i32,
@@ -370,6 +377,16 @@ pub fn gen_test_rate(
 ) {
     let mut test_gen_infos = get_test_gen_infos(project_dir, is_pre);
     test_gen_infos.retain(|info| functions.contains(info.get_name()));
+    let available = crate::target::targets(work_dir).expect("Cannot read test targets");
+    for info in &mut test_gen_infos {
+        info.target = Some(
+            crate::target::resolve_from(&available, info.target.as_ref())
+                .expect("Cannot resolve test target"),
+        );
+    }
+    if integration {
+        test_gen_infos.retain(|info| info.target.as_ref().unwrap().kind == "lib");
+    }
     if !integration {
         let mut test_rate_infos: Vec<TestRateInfo> = Vec::new();
         gen_coverage_and_pass_rate(project_dir, work_dir, &test_gen_infos, &mut test_rate_infos);
@@ -419,6 +436,8 @@ pub fn gen_test_rate(
                     let file_path = project_dir.join(file_rela);
                     let mut test_rate_info = TestRateInfo {
                         function_name: function_name.clone(),
+                        rust_name: test_gen_info.rust_name().to_owned(),
+                        target: test_gen_info.target.clone(),
                         file_path: file_path.to_string_lossy().to_string(),
                         work_dir: work_dir.to_string_lossy().to_string(),
                         tests: integration_info.tests,
@@ -474,7 +493,7 @@ pub fn gen_test_rate(
                     }
                     if !test_rate_info.coverage_available {
                         let mapping = baselines
-                            .mapping(work_dir, &function_name, &file_path, begin, end)
+                            .mapping_for_target(work_dir, &function_name, &file_path, begin, end, test_gen_info.target.as_ref())
                             .expect("Cannot collect integration coverage baseline");
                         test_rate_info.apply_baseline(mapping);
                     }
@@ -815,9 +834,7 @@ fn gen_coverage_and_pass_rate(
     for test_gen_info in test_gen_infos.iter() {
         let file_rela = test_gen_info.get_file();
         let file_path = project_dir.join(&file_rela);
-        if (project_dir == work_dir && !file_rela.starts_with("src"))
-            || (project_dir != work_dir && !file_path.starts_with(work_dir))
-        {
+        if !file_path.starts_with(work_dir) {
             continue;
         }
         progress += 1;
@@ -837,6 +854,8 @@ fn gen_coverage_and_pass_rate(
 
         let mut test_rate_info = TestRateInfo {
             function_name: name.clone(),
+            rust_name: test_gen_info.rust_name().to_owned(),
+            target: test_gen_info.target.clone(),
             file_path: file_path.to_string_lossy().to_string(),
             work_dir: work_dir.to_string_lossy().to_string(),
             tests: 0,
@@ -908,7 +927,7 @@ fn gen_coverage_and_pass_rate(
                             let test_type = TestType::CoverageRate;
                             let test_name = format!("test_{}", fn_name);
                             let run_test_output =
-                                run_test(project_dir, work_dir, test_type, true, false);
+                                run_test(project_dir, work_dir, test_type, true, false, test_gen_info.target.as_ref());
                             let loc = test_gen_info.get_loc();
                             let begin = loc.get_startline() as i32;
                             let end = loc.get_endline() as i32;
@@ -1020,12 +1039,13 @@ fn gen_coverage_and_pass_rate(
         test_rate_info.parse_codes_lines_and_branches();
         if !test_rate_info.coverage_available {
             let loc = test_gen_info.get_loc();
-            let mapping = baselines.mapping(
+            let mapping = baselines.mapping_for_target(
                 work_dir,
                 &name,
                 &file_path,
                 loc.get_startline() as i32,
                 loc.get_endline() as i32,
+                test_gen_info.target.as_ref(),
             )
                 .expect("Cannot collect unit coverage baseline");
             test_rate_info.apply_baseline(mapping);
@@ -1480,7 +1500,7 @@ fn gen_coverage_rate_for_original_tests(
             .expect("cannot restore original tests for coverage");
         // let _ = target_clean(work_dir);
         let test_type = TestType::CoverageRate;
-        run_test(project_dir, work_dir, test_type, true, false);
+        run_test(project_dir, work_dir, test_type, true, false, None);
         for test_gen_info in test_gen_infos.iter() {
             let function_name = test_gen_info.get_name().to_string();
             let file_rela = test_gen_info.get_file();

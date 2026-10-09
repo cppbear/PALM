@@ -4,8 +4,19 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-pub fn cargo_check(work_dir: &Path) -> Result<(), String> {
-    cargo_build(work_dir, &["--tests"])
+pub fn cargo_check(work_dir: &Path, target: &crate::target::TargetInfo) -> Result<(), String> {
+    let output = Command::new("cargo")
+        .arg("test")
+        .args(target.unit_args())
+        .arg("--no-run")
+        .current_dir(work_dir)
+        .output()
+        .expect("failed to compile unit tests");
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).into_owned())
+    }
 }
 
 pub(crate) fn cargo_check_test(work_dir: &Path, target: &str) -> Result<(), String> {

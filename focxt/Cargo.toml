@@ -9,6 +9,7 @@ repository.workspace = true
 # members = ["call_chain"]
 
 [dependencies]
+cargo_metadata = "0.18"
 call_chain = { path = "call_chain" }
 clap = { version = "4.5", features = ["derive"] }
 prettyplease = "0.2"

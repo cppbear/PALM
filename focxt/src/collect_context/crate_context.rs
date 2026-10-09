@@ -4,13 +4,11 @@ use std::{
     fs::{self, read_to_string, File},
     io::Write,
     path::PathBuf,
-    process,
     rc::Rc,
 };
 
 use call_chain::analysis::hirvisitor::ImplInformation;
 use syn::parse_file;
-use toml::Value;
 
 use super::{
     items_context::MyVisibility,
@@ -28,52 +26,13 @@ pub struct CrateContext {
 }
 
 impl CrateContext {
-    pub fn new(crate_path: &PathBuf) -> Self {
-        let mut crate_context = CrateContext {
-            crate_name: String::new(),
-            crate_path: PathBuf::new(),
-            entry_file_paths: Vec::new(),
+    pub fn new(crate_name: String, entry: PathBuf, output_path: PathBuf) -> Self {
+        Self {
+            crate_name,
+            crate_path: output_path,
+            entry_file_paths: vec![entry],
             main_mod_contexts: Vec::new(),
-        };
-        let toml_path = crate_path.join("Cargo.toml");
-        if fs::exists(&toml_path).unwrap() {
-            let toml_content =
-                read_to_string(toml_path).expect("Can not read the Cargo.toml file of the crate!");
-            let toml_value: Value = toml_content
-                .parse()
-                .expect("Failed to parse the Cargo.toml file of the crate!");
-            if let Some(package) = toml_value.get("package") {
-                if let Some(name) = package.get("name") {
-                    crate_context.crate_name = name.as_str().unwrap().to_string().replace("-", "_");
-                } else {
-                    eprintln!("Can not get the crate name of the crate!");
-                    process::exit(2);
-                }
-            } else {
-                eprintln!("Can not get the package infomation of the crate!");
-                process::exit(3);
-            }
-        } else {
-            eprintln!("Can not find the Cargo.toml file of the crate!");
-            process::exit(4);
         }
-        crate_context.crate_path = crate_path.clone();
-        let main_path = crate_path.join("src/main.rs");
-        let lib_path = crate_path.join("src/lib.rs");
-        let mut has_entry = false;
-        if fs::exists(&main_path).unwrap() {
-            crate_context.entry_file_paths.push(main_path);
-            has_entry = true;
-        }
-        if fs::exists(&lib_path).unwrap() {
-            crate_context.entry_file_paths.push(lib_path);
-            has_entry = true;
-        }
-        if has_entry == false {
-            eprintln!("Can not find the entry file of the crate!");
-            process::exit(5);
-        }
-        crate_context
     }
 
     pub fn parse_crate(&mut self) {
@@ -96,11 +55,6 @@ impl CrateContext {
                 &Some(Rc::clone(&mod_context)),
             );
             self.main_mod_contexts.push(mod_context);
-        }
-        if self.entry_file_paths.len() == 2 {
-            self.main_mod_contexts[0]
-                .borrow_mut()
-                .add_use_mod(&self.main_mod_contexts[1]);
         }
     }
 

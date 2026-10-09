@@ -111,6 +111,11 @@ impl CallChainCallbacks {
             // println!("{}", mod_info.name);
             impl_informations.push(impl_information.clone());
             let mut calls: HashSet<String> = HashSet::new();
+            let mut library_calls = HashSet::new();
+            let mut library_types = HashSet::new();
+            let library = std::env::var("PALM_LIBRARY_NAME").ok();
+            let from_library = |id: rustc_hir::def_id::DefId| !id.is_local()
+                && library.as_deref() == Some(tcx.crate_name(id.krate).as_str());
             let mut tys: HashSet<Ty<'tcx>> = HashSet::new();
             let mut types: HashSet<String> = HashSet::new();
             for basic_block in basic_blocks.iter() {
@@ -129,7 +134,17 @@ impl CallChainCallbacks {
                     let kind_strings: Vec<&str> = kind_string.splitn(3, ' ').into_iter().collect();
                     let kind_string = kind_strings[2];
                     let call_string = &kind_string[..kind_string.find("(").unwrap()];
-                    calls.insert(call_string.to_string());
+                    let dependency = match func {
+                        Operand::Constant(constant) => match constant.ty().kind() {
+                            TyKind::FnDef(id, _) if from_library(*id) => {
+                                library_calls.insert(super::hirvisitor::function_name(tcx, *id));
+                                true
+                            }
+                            _ => false,
+                        },
+                        _ => false,
+                    };
+                    if !dependency { calls.insert(call_string.to_string()); }
 
                     for arg in args.iter() {
                         if let Operand::Constant(constant) = &arg.node {
@@ -152,6 +167,12 @@ impl CallChainCallbacks {
                 collect_subtypes(local_decl.ty, tcx, &mut tys);
             }
             for ty in tys.iter() {
+                if let TyKind::Adt(adt, _) = ty.kind() {
+                    if from_library(adt.did()) {
+                        library_types.insert(tcx.def_path_str(adt.did()));
+                        continue;
+                    }
+                }
                 types.insert(ty.to_string());
             }
             // println!("Types:");
@@ -178,7 +199,11 @@ impl CallChainCallbacks {
             // for new_call in new_calls.iter() {
             //     calls.insert(new_call.clone());
             // }
-            let calls_and_types = CallsAndTypes::new(&mod_info.name, &calls, &types);
+            let mut calls_and_types = CallsAndTypes::new(&mod_info.name, &calls, &types);
+            calls_and_types.library_calls = library_calls.into_iter().collect();
+            calls_and_types.library_types = library_types.into_iter().collect();
+            calls_and_types.library_calls.sort();
+            calls_and_types.library_types.sort();
             let directory_path = self.crate_path.join("focxt/callsandtypes");
             create_dir_all(&directory_path).unwrap();
             let file_path = PathBuf::from(&directory_path)

@@ -25,7 +25,7 @@ cargo clean
 cargo brinfo
 ```
 
-The wrapper analyzes the crate's `lib` and `bin` targets through `cargo check`. Clearing the build cache ensures the compiler analysis runs even if the crate was previously checked. Use a fresh working copy without previous analysis output when repeating an experiment; `cargo clean` does not remove PALM's output files.
+The wrapper analyzes a single ordinary `lib` or `bin` target through `cargo check`. For packages with both or with multiple binaries, use `utgen analyze`; it runs each target separately and combines the results with library preference for shared source definitions. Clearing the build cache ensures the compiler analysis runs even if the crate was previously checked. Use a fresh working copy without previous analysis output when repeating an experiment; `cargo clean` does not remove PALM's output files.
 
 ## Output
 

@@ -177,12 +177,28 @@ fn in_cargo_brinfo() {
     let verbose = has_arg_flag("-v");
 
     let current_crate = current_crate();
+    if std::env::var_os("PALM_TARGET_NAME").is_none()
+        && current_crate
+            .targets
+            .iter()
+            .filter(|t| t.kind.iter().any(|k| k == "lib" || k == "bin"))
+            .count()
+            > 1
+    {
+        show_error(
+            "Multiple Cargo targets: use utgen analyze to preserve target ownership".to_owned(),
+        );
+    }
 
     let path = Path::new(&current_crate.manifest_path).parent().unwrap();
     let path_str = path.to_str().unwrap();
 
     // Now run the command.
     for target in current_crate.targets.into_iter() {
+        if let Ok(selected) = std::env::var("PALM_TARGET_NAME") {
+            let kind = std::env::var("PALM_TARGET_KIND").unwrap();
+            if target.name != selected || !target.kind.contains(&kind) { continue; }
+        }
         let mut args = std::env::args().skip(2);
         let kind = target
             .kind
@@ -197,7 +213,7 @@ fn in_cargo_brinfo() {
         info!("Kind of target {:?} is: {}.", target.name, kind);
         match kind.as_str() {
             "bin" => {
-                cmd.arg("--bin").arg(target.name);
+                cmd.arg("--bin").arg(&target.name);
             }
             "lib" => {
                 cmd.arg("--lib");
@@ -226,7 +242,9 @@ fn in_cargo_brinfo() {
             "BRINFO_ARGS",
             serde_json::to_string(&args_vec).expect("failed to serialize args"),
         );
-        cmd.env("BRINFO_TOP_CRATE_NAME", current_crate.name.clone());
+        cmd.env("BRINFO_TOP_CRATE_NAME", &target.name);
+        cmd.env("BRINFO_TOP_CRATE_KIND", kind);
+        cmd.env("BRINFO_TOP_CRATE_SRC", target.src_path.as_str());
 
         // Replace the rustc executable through RUSTC_WRAPPER environment variable
         let path = std::env::current_exe().expect("current executable path invalid");
@@ -237,7 +255,7 @@ fn in_cargo_brinfo() {
             eprintln!("+ {:?}", cmd);
         }
 
-        cmd.env("BRINFO_CRATE_DIR", path_str);
+        cmd.env("BRINFO_CRATE_DIR", std::env::var_os("PALM_OUTPUT_DIR").unwrap_or_else(|| path_str.into()));
 
         // Execute cmd
         let exit_status = cmd
@@ -269,7 +287,15 @@ fn inside_cargo_rustc() {
         std::env::var("BRINFO_TOP_CRATE_NAME").expect("missing BRINFO_TOP_CRATE_NAME");
     let top_crate_name = top_crate_name.replace("-", "_"); // Cargo seems to rename hyphens to underscores
 
-    if get_arg_flag_value("--crate-name").as_deref() == Some(&top_crate_name) {
+    let kind = std::env::var("BRINFO_TOP_CRATE_KIND").unwrap();
+    let entry = std::fs::canonicalize(std::env::var_os("BRINFO_TOP_CRATE_SRC").unwrap()).unwrap();
+    let is_entry = std::env::args()
+        .skip(2)
+        .any(|arg| std::fs::canonicalize(arg).is_ok_and(|path| path == entry));
+    if get_arg_flag_value("--crate-name").as_deref() == Some(&top_crate_name)
+        && get_arg_flag_value("--crate-type").as_deref() == Some(&kind)
+        && is_entry
+    {
         // If we are analyzing the crate that we want to analyze, add args for `brinfo`
         let magic = std::env::var("BRINFO_ARGS").expect("missing BRINFO_ARGS");
         let brinfo_args: Vec<String> =

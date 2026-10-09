@@ -406,6 +406,7 @@ async fn gen_full_tests(
 }
 
 pub fn check_unit(test_gen: &mut TestGenInfo, project_dir: &Path, work_dir: &Path) {
+    let target = crate::target::resolve_target(work_dir, test_gen.target.as_ref()).unwrap();
     let path = project_dir.join(test_gen.get_file());
     let name = test_gen.get_name().to_string();
     let fn_name = name.split("::").last().unwrap();
@@ -440,7 +441,7 @@ pub fn check_unit(test_gen: &mut TestGenInfo, project_dir: &Path, work_dir: &Pat
                     mod_code.splice(pos..pos, insert_code);
                     insert_test(insert_kind, &path, &mod_code);
                     // let _ = target_clean(&work_dir);
-                    let result = cargo_check(&work_dir);
+                    let result = cargo_check(&work_dir, &target);
                     test_info.can_compile[num] = result;
                     // test.can_compile = false;
                     id += 1;
