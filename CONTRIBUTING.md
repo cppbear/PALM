@@ -26,7 +26,7 @@ The checks use temporary targets and local model fixtures. They do not need API 
 
 ## Report a problem
 
-Open a [GitHub issue](https://github.com/cppbear/PALM/issues) with:
+Use the [bug report template](https://github.com/cppbear/PALM/issues/new/choose) with:
 
 - The PALM commit, operating system, `rustc --version`, and `cargo llvm-cov --version`.
 - The command you ran, expected behavior, actual behavior, and relevant error output.
@@ -38,5 +38,7 @@ Run PALM on a working copy of a target crate: preprocessing changes its source a
 ## Submit a pull request
 
 Keep the change focused and explain the problem, resulting behavior, and checks you ran. Add a regression case for a reproduced behavior change when the existing checks do not cover it. Real-model calls are not required for ordinary fixes; use local fixtures or existing saved candidates where practical.
+
+The PR template has three short sections: problem, change, and validation. Use the checks relevant to the change; if none are needed, explain why.
 
 Keep credentials, target build directories, generated answers, coverage reports, and local trial logs out of commits. Preserve the pinned toolchain and dependency lockfile unless changing them is part of the task.
