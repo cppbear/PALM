@@ -25,7 +25,7 @@ cargo clean
 cargo call-chain
 ```
 
-The wrapper analyzes `lib` and `bin` targets through `cargo check`. Clearing the build cache ensures analysis executes after an earlier check; it does not remove previous `focxt/` output.
+The wrapper analyzes a single ordinary `lib` or `bin` target through `cargo check`. Use `utgen analyze` for mixed packages so each target keeps separate artifacts. Calls and types from the package library retain their dependency origin when analyzing a binary. Clearing the build cache ensures analysis executes after an earlier check; it does not remove previous `focxt/` output.
 
 ## Output
 

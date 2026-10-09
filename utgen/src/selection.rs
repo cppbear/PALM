@@ -27,18 +27,41 @@ impl FunctionSelection {
             ));
         }
         let mut available = BTreeSet::new();
+        let mut aliases: HashMap<String, BTreeSet<String>> = HashMap::new();
         for work_dir in work_dirs {
-            let map: HashMap<String, String> =
-                serde_json::from_slice(&fs::read(work_dir.join("brinfo/name_map.json"))?)?;
-            available.extend(map.into_keys());
+            let map: HashMap<String, String> = serde_json::from_slice(&fs::read(work_dir.join("brinfo/name_map.json"))?)?;
+            for (id, _) in map {
+                let name = if id.starts_with("lib:") || id.starts_with("bin:") {
+                    id.split_once("::").map_or(id.as_str(), |(_, name)| name)
+                } else { &id };
+                aliases.entry(name.to_owned()).or_default().insert(id.clone());
+                available.insert(id);
+            }
         }
-        let unknown: Vec<_> = names.difference(&available).cloned().collect();
-        if !unknown.is_empty() {
-            return Err(io::Error::other(format!(
-                "Unknown functions in --functions-file: {}",
-                unknown.join(", ")
-            )));
+        let mut resolved = BTreeSet::new();
+        for name in names {
+            if available.contains(&name) {
+                resolved.insert(name);
+                continue;
+            }
+            match aliases.get(&name) {
+                Some(ids) if ids.len() == 1 => {
+                    resolved.insert(ids.iter().next().unwrap().clone());
+                }
+                Some(ids) => {
+                    return Err(io::Error::other(format!(
+                        "Ambiguous function {name}; select one of: {}",
+                        ids.iter().cloned().collect::<Vec<_>>().join(", ")
+                    )));
+                }
+                None => {
+                    return Err(io::Error::other(format!(
+                        "Unknown functions in --functions-file: {name}"
+                    )));
+                }
+            }
         }
+        let names = resolved;
         Ok(Self { names: Some(names) })
     }
 

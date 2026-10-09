@@ -3,6 +3,7 @@ mod config;
 mod gene;
 mod run;
 mod selection;
+mod target;
 mod types;
 mod utils;
 

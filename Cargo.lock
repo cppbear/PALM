@@ -499,6 +499,7 @@ version = "0.1.0"
 dependencies = [
  "build-utils",
  "call_chain",
+ "cargo_metadata 0.18.1",
  "clap",
  "prettyplease",
  "proc-macro2",

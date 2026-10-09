@@ -504,14 +504,11 @@ fn get_syntax(
     }
 }
 
-fn get_syntax_recursively(
+pub(crate) fn collect_calls(
     output_path: &PathBuf,
     impl_informations: &[ImplInformation],
     data: &CallsAndTypes,
-    syntax_context: &mut SyntaxContext,
-    fns: &HashMap<String, FnData>,
-    structs: &HashMap<String, StructData>,
-) {
+) -> CallsAndTypes {
     let mut remain_calls = data.calls.clone();
     let mut already_calls = HashSet::new();
     let mut end_data = data.clone();
@@ -532,6 +529,26 @@ fn get_syntax_recursively(
     end_data.calls.dedup();
     end_data.types.sort();
     end_data.types.dedup();
+    end_data
+}
+
+pub(crate) fn type_context(name: &str, structs: &HashMap<String, StructData>) -> String {
+    let mut data = CallsAndTypes::new_empty();
+    data.types.push(name.to_owned());
+    let mut context = SyntaxContext::new();
+    get_syntax(&data, &mut context, &HashMap::new(), structs);
+    context.to_string()
+}
+
+fn get_syntax_recursively(
+    output_path: &PathBuf,
+    impl_informations: &[ImplInformation],
+    data: &CallsAndTypes,
+    syntax_context: &mut SyntaxContext,
+    fns: &HashMap<String, FnData>,
+    structs: &HashMap<String, StructData>,
+) {
+    let end_data = collect_calls(output_path, impl_informations, data);
     let data = &end_data;
     for call in data.calls.iter() {
         let fn_data = fns.get(call);

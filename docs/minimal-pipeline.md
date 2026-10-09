@@ -19,15 +19,17 @@ Run the related checks when changing coverage/preprocessing or task scheduling:
 python3 scripts/check_coverage.py
 cargo test -p utgen --locked coverage_baselines_match_test_build_modes -- --ignored
 python3 scripts/check_tasks.py
+python3 scripts/check_mixed.py
 ```
 
-All three scripts are included in the full Linux CI suite. Their options differ:
+All four scripts are included in the full Linux CI suite. Their options differ:
 
 | Script | Options |
 | --- | --- |
 | `check_minimal.py` | `--bin-dir <directory>`; `--work-dir <new-directory>`; `--analysis-only` to stop after analysis checks. |
 | `check_coverage.py` | `--bin-dir <directory>`. |
 | `check_tasks.py` | `--bin-dir <directory>`. |
+| `check_mixed.py` | `--bin-dir <directory>`. |
 
 The default binary directory is `target/debug`. The coverage tool must be available in `PATH` at the version specified in the prerequisites. `--work-dir` must name a new directory.
 
@@ -45,6 +47,7 @@ The default binary directory is `target/debug`. The coverage tool must be availa
 | Statistics | Oracle groups count once across multiple candidates; pass results match complete test names; all-compilation-failure results retain a zero-hit denominator without a synthetic candidate. A passing integration candidate that does not call the focal function has zero focal coverage. |
 | Coverage baselines | No-test unit/library and binary harnesses; ordinary-library integration maps; conditional compilation, generics, no-map targets, per-target reuse, separation from real profiles, and source/helper restoration after build failure. |
 | Integration repair | Repairs alias/trait imports, helpers, and test bodies in integration targets; keeps sibling candidates independent; checks cached repair, mode mismatch, unselected targets, and cleanup after request failure. |
+| Mixed targets | Shared definitions prefer lib; same-name distinct definitions and bin-only functions remain separate. Checks cover dependency context, custom target names/entries, generic/trait methods, multiple binaries, generation, repair with warnings, cached results, automatic integration selection, and legacy mixed-cache rejection. |
 | Integration directories | Original and generated tests coexist after normal runs and cached reruns; original-test compilation failure restores both directories; an existing staging directory is preserved and reported. |
 
 The integration-directory cases retain the original `tests.bak/` while generating `tests/`. They use one cached candidate and make no additional model requests. Separate timeout cases also check integration execution without an original-test backup.

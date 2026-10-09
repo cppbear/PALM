@@ -179,6 +179,10 @@ impl Cond {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CallsAndTypes {
+    #[serde(default)]
+    pub library_calls: Vec<String>,
+    #[serde(default)]
+    pub library_types: Vec<String>,
     pub mod_name: String,
     pub calls: Vec<String>,
     pub types: Vec<String>,
@@ -187,6 +191,8 @@ pub struct CallsAndTypes {
 impl CallsAndTypes {
     pub fn new_empty() -> Self {
         CallsAndTypes {
+            library_calls: Vec::new(),
+            library_types: Vec::new(),
             mod_name: String::new(),
             calls: Vec::new(),
             types: Vec::new(),
@@ -203,6 +209,8 @@ impl CallsAndTypes {
             types_vec.push(a_type.clone());
         }
         CallsAndTypes {
+            library_calls: Vec::new(),
+            library_types: Vec::new(),
             mod_name: mod_name.clone(),
             calls: calls_vec,
             types: types_vec,
@@ -210,6 +218,16 @@ impl CallsAndTypes {
     }
 
     pub fn add_data(&mut self, data: &CallsAndTypes) {
+        for name in &data.library_calls {
+            if !self.library_calls.contains(name) {
+                self.library_calls.push(name.clone());
+            }
+        }
+        for name in &data.library_types {
+            if !self.library_types.contains(name) {
+                self.library_types.push(name.clone());
+            }
+        }
         for other_call in data.calls.iter() {
             if !self.calls.contains(other_call) {
                 self.calls.push(other_call.clone());

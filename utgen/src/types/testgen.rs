@@ -10,6 +10,8 @@ use std::{
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RfocxtNameInformation {
+    #[serde(default)]
+    pub id: String,
     pub mod_name: String,
     pub fn_name: String,
     pub struct_name: String,
@@ -26,6 +28,10 @@ pub enum InsertKind {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TestGenInfo {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub target: Option<crate::target::TargetInfo>,
     #[serde(default)]
     pub integration: bool,
     name: String,
@@ -46,6 +52,8 @@ impl TestGenInfo {
         fn_tests: Vec<ChainTestInfo>,
     ) -> TestGenInfo {
         TestGenInfo {
+            id: String::new(),
+            target: None,
             integration: false,
             name,
             name_with_impl,
@@ -81,6 +89,14 @@ impl TestGenInfo {
     }
 
     pub fn get_name(&self) -> &str {
+        if self.id.is_empty() {
+            &self.name
+        } else {
+            &self.id
+        }
+    }
+
+    pub fn rust_name(&self) -> &str {
         &self.name
     }
 

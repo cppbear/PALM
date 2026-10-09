@@ -4,6 +4,10 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct BrData {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub target: Option<crate::target::TargetInfo>,
     pub name: String,
     pub name_with_impl: String,
     pub mod_info: ModInfo,

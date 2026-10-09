@@ -230,7 +230,7 @@ pub fn gen_integration(test_gen_infos: &Vec<TestGenInfo>, work_dir: &Path) -> Ve
         let file = test_gen.get_file();
         let stem = Path::new(&file).file_stem().unwrap().to_str().unwrap();
         let name = test_gen.get_name();
-        let rename = name
+        let rename = test_gen.rust_name()
             .replace("::", "_")
             .replace(['{', '}'], "")
             .replace('#', "_");

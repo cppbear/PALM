@@ -23,6 +23,28 @@ fn encoded_name(s: &str) -> String {
     base62::encode(XxHash3_64::oneshot(s.as_bytes()))
 }
 
+pub fn function_name(tcx: TyCtxt<'_>, def_id: rustc_hir::def_id::DefId) -> String {
+    let mut path = tcx.def_path(def_id).to_string_no_crate_verbose();
+    if let Some(impl_id) = tcx.impl_of_method(def_id) {
+        let mut implementation = tcx.def_path_str(impl_id);
+        if !def_id.is_local() {
+            // rustc omits this crate's own prefix in its local impl index,
+            // but prints it when another crate references the same method.
+            let prefix = Regex::new(&format!(
+                r"(^|[^\w:]){}::",
+                regex::escape(tcx.crate_name(def_id.krate).as_str())
+            ))
+            .unwrap();
+            implementation = prefix.replace_all(&implementation, "$1").into_owned();
+        }
+        path = Regex::new(r"\{impl#\d+\}")
+            .unwrap()
+            .replace(&path, implementation)
+            .into_owned();
+    }
+    tcx.crate_name(def_id.krate).to_string() + &path
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 
 pub struct ImplInformation {
@@ -54,7 +76,6 @@ pub struct HirVisitor<'tcx> {
     tcx: TyCtxt<'tcx>,
     mod_infos: Vec<ModInfo>,
     result: Vec<VisitorData<'tcx>>,
-    re: Regex,
 }
 
 impl<'tcx> HirVisitor<'tcx> {
@@ -63,7 +84,6 @@ impl<'tcx> HirVisitor<'tcx> {
             tcx,
             mod_infos: Vec::new(),
             result: Vec::new(),
-            re: Regex::new(r"\{impl#\d+\}").unwrap(),
         }
     }
 
@@ -79,11 +99,6 @@ impl<'tcx> HirVisitor<'tcx> {
         let visibility = self.tcx.visibility(def_id);
         visibility.is_accessible_from(CRATE_DEF_ID.to_def_id(), self.tcx)
             && !source.get_file().contains("main.rs")
-    }
-
-    fn replace_impl_name(&self, impl_id: rustc_hir::def_id::DefId, def_str: &String) -> String {
-        let impl_name = self.tcx.def_path_str(impl_id);
-        self.re.replace(def_str, impl_name).to_string()
     }
 }
 
@@ -228,15 +243,7 @@ impl<'tcx> Visitor<'tcx> for HirVisitor<'tcx> {
             _ => {}
         }
 
-        let crate_name = self.tcx.crate_name(def_id.krate).to_string();
-        let mut def_str = self.tcx.def_path(def_id).to_string_no_crate_verbose();
-        let name_with_impl = crate_name.clone() + &def_str;
-        if let intravisit::FnKind::Method(_, _) = fk {
-            if let Some(impl_id) = self.tcx.impl_of_method(def_id) {
-                def_str = self.replace_impl_name(impl_id, &def_str);
-            }
-        }
-        let full_name = crate_name + &def_str;
+        let full_name = function_name(self.tcx, def_id);
         let encoded_name = encoded_name(&full_name);
 
         let impl_information = ImplInformation {

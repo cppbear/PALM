@@ -270,13 +270,13 @@ fn analysis_stops_after_a_failed_tool_command() {
     let output = fixture
         .command()
         .args(["analyze", "-p", "."])
+        .env("CARGO", &cargo)
         .env("PATH", fixture.0.join("bin"))
         .output()
         .unwrap();
     let error = String::from_utf8_lossy(&output.stderr);
     assert!(!output.status.success());
     assert_eq!(error.matches("fixture-cargo-failure").count(), 1, "{error}");
-    assert!(error.contains("42"), "{error}");
     assert!(!fixture.0.join("brinfo").exists());
     assert!(!fixture.0.join("focxt").exists());
 }

@@ -1,4 +1,4 @@
-use cargo_metadata::MetadataCommand;
+use cargo_metadata::{MetadataCommand, TargetKind};
 use std::{collections::BTreeSet, fs, io, ops::Range, path::Path};
 use syn::{Meta, Token, punctuated::Punctuated, spanned::Spanned, visit::Visit};
 use walkdir::WalkDir;
@@ -32,39 +32,45 @@ pub fn comment_out_tests(dir: &Path) -> io::Result<()> {
     // used by include! can be left alone. Directory-only preprocessing remains
     // usable without requiring a manifest.
     let roots: BTreeSet<_> = if dir.join("Cargo.toml").is_file() {
+        let manifest = dir.join("Cargo.toml").canonicalize()?;
         MetadataCommand::new()
-            .manifest_path(dir.join("Cargo.toml").canonicalize()?)
+            .manifest_path(&manifest)
             .current_dir(dir)
             .no_deps()
             .exec()
             .map_err(io::Error::other)?
             .packages
             .into_iter()
+            .filter(|package| package.manifest_path.as_std_path() == manifest)
             .flat_map(|p| {
                 p.targets
                     .into_iter()
+                    .filter(|t| t.is_kind(TargetKind::Lib) || t.is_kind(TargetKind::Bin))
                     .map(|t| t.src_path.into_std_path_buf())
             })
             .collect()
     } else {
         BTreeSet::new()
     };
-    // Parse every file before writing any of them.
-    let mut changes = Vec::new();
+    let mut files = roots.clone();
     for entry in WalkDir::new(src) {
         let entry = entry.map_err(io::Error::other)?;
-        let path = entry.path();
-        if entry.file_type().is_file() && path.extension().is_some_and(|e| e == "rs") {
-            let original = fs::read_to_string(path)?;
-            let prepared = prepare_source(&original, roots.contains(path)).map_err(|err| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("{}: {err}", path.display()),
-                )
-            })?;
-            if prepared != original {
-                changes.push((path.to_owned(), prepared));
-            }
+        if entry.file_type().is_file() && entry.path().extension().is_some_and(|e| e == "rs") {
+            files.insert(entry.into_path());
+        }
+    }
+    // Parse every file before writing any of them, including non-default Cargo entries.
+    let mut changes = Vec::new();
+    for path in files {
+        let original = fs::read_to_string(&path)?;
+        let prepared = prepare_source(&original, roots.contains(&path)).map_err(|err| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("{}: {err}", path.display()),
+            )
+        })?;
+        if prepared != original {
+            changes.push((path, prepared));
         }
     }
     for (path, prepared) in changes {
