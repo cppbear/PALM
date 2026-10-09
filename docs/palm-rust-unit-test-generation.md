@@ -446,7 +446,7 @@ bin 的单元模式将 `--lib` 替换为 `--bin <name>`；集成模式使用对�
 
 - `utgen/src/run/llm_fix.rs`
   - 读取 `utgen/generation/pre_fix`，复制或合并到 `utgen/generation/llm_fix`。
-  - 单元模式把候选临时插入源码，按保存的 lib/bin 目标运行 `cargo test --lib/--bin <name> --no-run --message-format json`，读取编译错误而非普通警告。
+  - 单元模式把候选临时插入源码，按保存的目标运行编译诊断：lib 使用 `cargo test --lib --no-run --message-format json`，bin 将 `--lib` 替换为 `--bin <name>`。修复读取编译错误而非普通警告。
   - 集成模式将候选导入、辅助代码和测试体写入临时 `tests/palm_candidate.rs`，以 `cargo test --test palm_candidate --no-run --message-format json` 收集诊断，不插入生产源码。Cargo 仍可能编译依赖库及包内 bin。
   - 解析编译错误，抽取错误相关代码片段。
   - 构造 `rustassistant_prompt.json` 中定义的 ChangeLog 格式要求。
