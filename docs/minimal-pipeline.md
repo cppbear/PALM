@@ -13,6 +13,8 @@ python3 scripts/check_minimal.py
 
 The script uses the [minimal fixture](../examples/minimal/README.md) in temporary copies. It prints the working directory and finishes with `Minimal analysis/generation/repair/coverage checks passed.` The checked-in fixture remains unchanged.
 
+The [homepage example](../README.md#a-small-example) shows excerpts from its fixed responses for `classify`. Those assertions are illustrative excerpts, not a complete generated file or a model-quality result. The full script also exercises deliberate compilation failures and runtime failures; the final success message means those outcomes and cleanup matched expectations.
+
 Run the related checks when changing coverage/preprocessing or task scheduling:
 
 ```sh
