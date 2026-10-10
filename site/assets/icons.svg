@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+<symbol id="arrow" viewBox="0 0 24 24"><path d="M4 12h16m-6-6 6 6-6 6"/></symbol>
+<symbol id="external" viewBox="0 0 24 24"><path d="m6 18 12-12M6 6h12v12"/></symbol>
+<symbol id="file" viewBox="0 0 24 24"><path d="M14 3H5v18h14V8l-5-5Zm0 0v5h5M8 12h8m-8 4h6"/></symbol>
+<symbol id="branch" viewBox="0 0 24 24"><circle cx="6" cy="5" r="2.5"/><circle cx="6" cy="19" r="2.5"/><circle cx="18" cy="5" r="2.5"/><path d="M6 7.5v9M18 7.5c0 5-12 1-12 7"/></symbol>
+<symbol id="context" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="6" rx="1"/><rect x="14" y="15" width="7" height="6" rx="1"/><path d="M6.5 9v9H14m-1-13h8m-8 4h5"/></symbol>
+<symbol id="code" viewBox="0 0 24 24"><path d="m7 7-5 5 5 5m10-10 5 5-5 5M14 4l-4 16"/></symbol>
+<symbol id="check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+<symbol id="cross" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+<symbol id="chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+<symbol id="retry" viewBox="0 0 24 24"><path d="M4 8a8 8 0 1 1 0 8M4 3v5h5"/></symbol>
+<symbol id="result" viewBox="0 0 24 24"><path d="M4 3v18h17M8 16v-5m5 5V6m5 10v-7"/></symbol>
+<symbol id="terminal" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m6 9 3 3-3 3m6 0h5"/></symbol>
+<symbol id="copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V3H3v13h5"/></symbol>
+<symbol id="route-motif" viewBox="0 0 480 80"><path d="M8 40h84m0 0V12h120v28m-120 0v28h120V40h68m0 0V12h104v28m-104 0v28h104V40h88"/><circle cx="8" cy="40" r="4"/><circle cx="92" cy="40" r="4"/><circle cx="212" cy="40" r="4"/><circle cx="280" cy="40" r="4"/><circle cx="384" cy="40" r="4"/><circle cx="472" cy="40" r="4"/></symbol>
+</svg>

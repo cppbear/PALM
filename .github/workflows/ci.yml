@@ -36,14 +36,17 @@ jobs:
             run_code=false
             while IFS= read -r -d '' path; do
               case "$path" in
-                README.md|*/README.md|docs/*.md|docs/assets/*.png|docs/ase2025/*.pdf) ;;
+                README.md|*/README.md|CONTRIBUTING.md|LICENSE|CITATION.cff) ;;
+                docs/*.md|docs/assets/*.png|docs/assets/*.svg|docs/ase2025/*.pdf) ;;
+                site/*|.github/workflows/pages.yml) ;;
+                .github/ISSUE_TEMPLATE/*|.github/pull_request_template.md) ;;
                 *) run_code=true; break ;;
               esac
             done < <(git diff --name-only --no-renames -z "$BASE_SHA" HEAD)
           fi
           echo "run_code=$run_code" >> "$GITHUB_OUTPUT"
           if [[ "$run_code" == "false" ]]; then
-            echo "Documentation-only change: patch whitespace checked; Rust checks skipped." >> "$GITHUB_STEP_SUMMARY"
+            echo "Documentation, website, or repository metadata only: patch whitespace checked; Rust checks skipped." >> "$GITHUB_STEP_SUMMARY"
           fi
       - name: Install the pinned compiler and components
         if: steps.scope.outputs.run_code == 'true'
