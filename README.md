@@ -1,16 +1,72 @@
-# <img src="site/assets/mark.svg" width="40" height="40" alt=""> PALM
+<h1 align="center"><img src="site/assets/mark.svg" width="44" height="44" alt=""> PALM</h1>
 
-**Rust tests, guided by program analysis.**
+<p align="center"><strong>Rust tests, guided by program analysis.</strong></p>
 
-[![Website](https://img.shields.io/badge/website-PALM-5941bc)](https://cppbear.github.io/PALM/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-5941bc)](LICENSE)
-[![Build and test](https://github.com/cppbear/PALM/actions/workflows/ci.yml/badge.svg)](https://github.com/cppbear/PALM/actions/workflows/ci.yml)
+<p align="center">
+  <a href="https://cppbear.github.io/PALM/"><img src="https://img.shields.io/badge/website-PALM-5941bc" alt="Website"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-5941bc" alt="License: MIT"></a>
+  <a href="https://github.com/cppbear/PALM/actions/workflows/ci.yml"><img src="https://github.com/cppbear/PALM/actions/workflows/ci.yml/badge.svg" alt="Build and test"></a>
+</p>
+
+<p align="center">
+  <a href="https://cppbear.github.io/PALM/">Website &amp; interactive demo</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="https://doi.org/10.1109/ASE63991.2025.00223">Paper</a> ·
+  <a href="docs/palm-rust-unit-test-generation.md">中文技术指南</a>
+</p>
 
 PALM generates Rust tests by combining program analysis with large language models. It extracts path constraints and code context, generates candidates, repairs compilation errors, and reports execution results and coverage with test code excluded.
 
-This is the maintained implementation of ***PALM: Synergizing Program Analysis and LLMs to Enhance Rust Unit Test Coverage***, published at ASE 2025. The current code includes changes made after the paper's experiments.
+This is the maintained implementation of the [ASE 2025 paper](#citation), with changes made after the paper's experiments.
 
-[Website](https://cppbear.github.io/PALM/) · [Quick start](#quick-start) · [Examples](examples/README.md) · [CLI reference](utgen/README.md) · [中文技术指南](docs/palm-rust-unit-test-generation.md) · [Paper](https://doi.org/10.1109/ASE63991.2025.00223) · [Preprint](https://arxiv.org/abs/2506.09002)
+<a href="https://cppbear.github.io/PALM/">
+  <picture>
+    <source media="(max-width: 600px)" srcset="docs/assets/palm-example-mobile.svg">
+    <img src="docs/assets/palm-example.svg" width="920" alt="Offline example: input 2 follows classify's true branch and returns 1; a fixed local response supplies assert_eq!(classify(2), 1).">
+  </picture>
+</a>
+
+*Illustration of the [minimal offline fixture](examples/minimal/README.md), using fixed local responses. It does not measure model quality. [Explore both paths on the website](https://cppbear.github.io/PALM/).*
+
+## Quick start
+
+First complete the [prerequisites](#prerequisites): Git, Rust, a C linker, Python 3.9+, and the pinned analysis and coverage tools. Then run the minimal pipeline without API keys:
+
+```sh
+git clone https://github.com/cppbear/PALM.git
+cd PALM
+cargo build --workspace --locked
+python3 scripts/check_minimal.py
+```
+
+The script works in temporary copies, prints their location, and finishes with:
+
+```text
+Minimal analysis/generation/repair/coverage checks passed.
+```
+
+See [minimal pipeline validation](docs/minimal-pipeline.md) for the checked scenarios. For a real model, [install PALM](#installation), [select a runtime configuration](utgen/README.md#prerequisites), and follow a [bounded example](examples/README.md).
+
+## Prerequisites
+
+Use a native build environment with Git, [rustup](https://rustup.rs/), stable Rust, a C linker, and Python 3.9 or later for the validation scripts. Tool and dependency downloads may require network access.
+
+1. Install the pinned analysis toolchain and components:
+
+   ```sh
+   rustup toolchain install nightly-2025-03-19 --profile minimal \
+     --component rust-src --component rustc-dev --component llvm-tools-preview --component rust-analyzer
+   ```
+
+2. Install [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov):
+
+   ```sh
+   cargo +stable install cargo-llvm-cov --version 0.6.16 --locked
+   ```
+
+Use the same nightly for the target package. `rust-analyzer` provides editor support; compiler analysis uses components such as `rustc-dev`. Building, installation, and the offline checks need no model credentials.
+
+[Continue with the quick start](#quick-start) once the prerequisites are installed.
 
 ## What PALM does
 
@@ -23,12 +79,24 @@ This is the maintained implementation of ***PALM: Synergizing Program Analysis a
 
 ```mermaid
 flowchart TD
-    A["Rust package"] --> B["Path constraints and code context"]
-    B --> C["Model-generated tests"]
+    A["Rust package"] --> P["Representative<br/>path constraints"]
+    A --> X["Focal-function<br/>context"]
+    P --> C["Model-generated<br/>test candidates"]
+    X --> C
     C --> D["Compilation check"]
+    D -->|Compiles| F["Test execution<br/>and coverage"]
     D -->|Compiler errors| E["Model repair"]
-    E --> D
-    D -->|Compiles| F["Test execution and coverage"]
+    E -.->|Recheck| D
+    classDef source fill:#f7f7fc,stroke:#8774ab,color:#222133
+    classDef analysis fill:#eeebf8,stroke:#8774ab,color:#222133
+    classDef generate fill:#5941bc,stroke:#5941bc,color:#ffffff
+    classDef repair fill:#f4eaf2,stroke:#854d79,color:#64375b
+    classDef result fill:#e8f2eb,stroke:#276047,color:#214f3a
+    class A,D source
+    class P,X analysis
+    class C generate
+    class E repair
+    class F result
 ```
 
 Repair addresses compilation errors. Runtime assertion failures and candidate timeouts remain failed test outcomes.
@@ -54,45 +122,14 @@ assert_eq!(classify(2), 1);
 assert_eq!(classify(-1), 0);
 ```
 
-The same check exercises compilation repair with an intentionally invalid candidate, then validates execution, coverage, and source restoration. It uses real Rust tools but does not measure model quality. [Run it below](#quick-start), then use the [validation guide](docs/minimal-pipeline.md#outputs-and-coverage-interpretation) to interpret its output.
+In a separate case, `nested::double` takes an `i32`. The check supplies an intentionally invalid candidate and a fixed repair response:
 
-## Prerequisites
-
-Use a native build environment with Git, [rustup](https://rustup.rs/), stable Rust, a C linker, and Python 3.9 or later for the validation scripts. Tool and dependency downloads may require network access.
-
-1. Install the pinned analysis toolchain and components:
-
-   ```sh
-   rustup toolchain install nightly-2025-03-19 --profile minimal \
-     --component rust-src --component rustc-dev --component llvm-tools-preview --component rust-analyzer
-   ```
-
-2. Install [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov):
-
-   ```sh
-   cargo +stable install cargo-llvm-cov --version 0.6.16 --locked
-   ```
-
-Use the same nightly for the target package. `rust-analyzer` provides editor support; compiler analysis uses components such as `rustc-dev`. Building, installation, and the offline checks need no model credentials.
-
-## Quick start
-
-After installing the prerequisites, run the minimal pipeline without API keys:
-
-```sh
-git clone https://github.com/cppbear/PALM.git
-cd PALM
-cargo build --workspace --locked
-python3 scripts/check_minimal.py
+```diff
+- assert_eq!(double("bad"), 4);
++ assert_eq!(double(2), 4);
 ```
 
-The script works in temporary copies, prints their location, and finishes with:
-
-```text
-Minimal analysis/generation/repair/coverage checks passed.
-```
-
-See [minimal pipeline validation](docs/minimal-pipeline.md) for the checked scenarios. For a real model, install the tools below, [select a runtime configuration](utgen/README.md#prerequisites), and follow a [bounded example](examples/README.md).
+The check validates compilation repair, execution, coverage, and source restoration with real Rust tools. Its fixed local responses do not measure model quality. [Explore the illustrated examples](https://cppbear.github.io/PALM/), [run the offline check](#quick-start), then use the [validation guide](docs/minimal-pipeline.md#outputs-and-coverage-interpretation) to interpret its output.
 
 ## Installation
 
@@ -105,6 +142,12 @@ From the repository root:
 This installs brinfo, call_chain, focxt, and utgen. Ensure Cargo's binary directory, typically `$HOME/.cargo/bin`, is in `PATH`. The installer also works from another directory; `./install.sh --help` lists tool selection options. See [build and installation checks](docs/build-validation.md) for verification and the component READMEs below for individual installation commands.
 
 Model configuration is loaded at runtime by `gen` and `fix`. Changing the API address, key, or model takes effect on the next command without rebuilding.
+
+## Docker
+
+Run `docker/docker-build`, then `docker/docker-run` to open a shell with the repository mounted at `/home/palm/palm`. Follow [Installation](#installation) inside the container. The image includes the pinned compiler and coverage tools; files written in the mounted repository remain on the host after the container exits.
+
+Both scripts locate the repository from their own paths. See [Docker validation and CI scope](docs/build-validation.md#ci-and-further-checks) for the checked environment and optional container pipeline check.
 
 ## Workflow
 
@@ -144,12 +187,6 @@ See the [CLI reference](utgen/README.md) for source-processing boundaries, cache
 | [docs](docs/README.md) | Technical, usage, validation, and research documentation. |
 | `docker/` | Container build and run scripts. |
 
-## Docker
-
-Run `docker/docker-build`, then `docker/docker-run` to open a shell with the repository mounted at `/home/palm/palm`. Follow [Installation](#installation) inside the container. The image includes the pinned compiler and coverage tools; files written in the mounted repository remain on the host after the container exits.
-
-Both scripts locate the repository from their own paths. See [Docker validation and CI scope](docs/build-validation.md#ci-and-further-checks) for the checked environment and optional container pipeline check.
-
 ## Development checks
 
 ```sh
@@ -173,7 +210,7 @@ Bug reports and focused pull requests are welcome. Include a reproducer and rele
 
 ## Citation
 
-If you use PALM in your research, please cite the ASE 2025 paper. [CITATION.cff](CITATION.cff) provides the machine-readable citation.
+If you use PALM in your research, please cite **PALM: Synergizing Program Analysis and LLMs to Enhance Rust Unit Test Coverage** (ASE 2025). [Published paper](https://doi.org/10.1109/ASE63991.2025.00223) · [Open-access preprint](https://arxiv.org/abs/2506.09002). [CITATION.cff](CITATION.cff) provides the machine-readable citation.
 
 ```bibtex
 @inproceedings{Chu2025PALM,

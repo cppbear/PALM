@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 294" role="img" aria-labelledby="title desc">
+  <title id="title">A PALM offline example: source, branch, and test assertion</title>
+  <desc id="desc">For input 2, classify calls support::positive. The true branch returns 1; a fixed local response supplies assert_eq!(classify(2), 1). This illustration does not run code or call a model.</desc>
+  <defs><clipPath id="canvas"><rect width="920" height="294" rx="14"/></clipPath></defs>
+  <g clip-path="url(#canvas)">
+    <path fill="#252333" d="M0 0h920v294H0z"/>
+    <path fill="#2e293f" d="M638 54h282v240H638z"/>
+    <path fill="none" stroke="#494458" d="M0 54h920M336 54v240M638 54v240"/>
+  </g>
+  <g font-family="system-ui, -apple-system, 'Segoe UI', sans-serif">
+    <text x="24" y="34" fill="#f2effb" font-size="19" font-weight="600">Follow a path into a test.</text>
+    <text x="896" y="33" text-anchor="end" fill="#bab4cb" font-size="13">Offline example</text>
+    <g fill="#bab4cb" font-size="14" font-weight="600">
+      <text x="24" y="86">Source</text><text x="360" y="86">Extracted paths</text><text x="662" y="86">Fixed assertion</text>
+    </g>
+  </g>
+  <g font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="14" fill="#f2effb">
+    <text x="24" y="116">classify(value: i32)</text>
+    <rect x="20" y="152" width="294" height="24" rx="4" fill="#494061"/>
+    <text x="24" y="144"><tspan fill="#d5b4fb">if</tspan> support::positive(value) {</text>
+    <text x="44" y="169" fill="#f1d49b">1</text>
+    <text x="24" y="194">} <tspan fill="#d5b4fb">else</tspan> {</text>
+    <text x="44" y="219" fill="#f1d49b">0</text>
+    <text x="24" y="244">}</text>
+    <text x="487" y="119" text-anchor="middle" font-size="13">support::positive(value)</text>
+    <path d="M487 140v18h-67v61" fill="none" stroke="#c7b5ff" stroke-width="3"/>
+    <path d="M487 158h67v61" fill="none" stroke="#81758f" stroke-width="2"/>
+    <circle cx="487" cy="140" r="4" fill="#c7b5ff"/>
+    <rect x="395" y="169" width="50" height="25" rx="5" fill="#c7b5ff"/>
+    <rect x="527" y="169" width="54" height="25" rx="5" fill="#393544"/>
+    <text x="420" y="187" text-anchor="middle" fill="#24183e">true</text>
+    <text x="554" y="187" text-anchor="middle" fill="#c6bfd6">false</text>
+    <circle cx="420" cy="222" r="5" fill="#c7b5ff"/><circle cx="554" cy="222" r="5" fill="#988fac"/>
+    <text x="420" y="247" text-anchor="middle">return 1</text><text x="554" y="247" text-anchor="middle" fill="#c6bfd6">return 0</text>
+    <text x="662" y="119" fill="#c7b5ff">input = 2</text>
+    <text x="662" y="158">assert_eq!(</text>
+    <text x="682" y="183">classify(2),</text>
+    <text x="682" y="208" fill="#f1d49b">1</text>
+    <text x="662" y="233">);</text>
+  </g>
+  <text x="662" y="272" fill="#bab4cb" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="12">Excerpt from a fixed local response.</text>
+</svg>

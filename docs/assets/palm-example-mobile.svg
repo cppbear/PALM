@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 390" role="img" aria-labelledby="title desc">
+  <title id="title">A PALM offline example: source, branch, and test assertion</title>
+  <desc id="desc">For input 2, classify calls support::positive. The true branch returns 1; a fixed local response supplies assert_eq!(classify(2), 1). This illustration does not run code or call a model.</desc>
+  <defs><clipPath id="canvas"><rect width="360" height="390" rx="12"/></clipPath></defs>
+  <g clip-path="url(#canvas)"><path fill="#252333" d="M0 0h360v390H0z"/><path fill="#2e293f" d="M0 275h360v115H0z"/><path fill="none" stroke="#494458" d="M0 49h360M0 146h360M0 275h360"/></g>
+  <g font-family="system-ui, -apple-system, 'Segoe UI', sans-serif">
+    <text x="20" y="31" fill="#f2effb" font-size="18" font-weight="600">Follow a path into a test.</text>
+    <g fill="#bab4cb" font-size="13" font-weight="600"><text x="20" y="75">Source · classify(value: i32)</text><text x="20" y="171">Extracted paths</text><text x="20" y="301">Fixed assertion · input = 2</text></g>
+  </g>
+  <g font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="13" fill="#f2effb">
+    <text x="20" y="105"><tspan fill="#d5b4fb">if</tspan> support::positive(value) { <tspan fill="#f1d49b">1</tspan> }</text>
+    <text x="20" y="129"><tspan fill="#d5b4fb">else</tspan> { <tspan fill="#f1d49b">0</tspan> }</text>
+    <text x="180" y="195" text-anchor="middle">support::positive(value)</text>
+    <path d="M180 207v9h-76v30" fill="none" stroke="#c7b5ff" stroke-width="3"/><path d="M180 216h76v30" fill="none" stroke="#81758f" stroke-width="2"/>
+    <rect x="62" y="231" width="84" height="25" rx="5" fill="#c7b5ff"/><rect x="210" y="231" width="92" height="25" rx="5" fill="#393544"/>
+    <text x="104" y="249" text-anchor="middle" fill="#24183e">true → 1</text><text x="256" y="249" text-anchor="middle" fill="#c6bfd6">false → 0</text>
+    <text x="20" y="336" font-size="14">assert_eq!(classify(2), 1);</text>
+  </g>
+  <text x="20" y="368" fill="#bab4cb" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="12">Offline example · fixed local response</text>
+</svg>
