@@ -49,7 +49,15 @@ Model configuration is loaded only when generation or repair starts. See the [ru
 
 The [native CI workflow](../.github/workflows/ci.yml) checks builds, ordinary tests, CLI entry points, installer syntax/help, and example metadata on Linux. It also runs the [minimal pipeline and related regressions](minimal-pipeline.md) and [Bytes analysis checks](bytes-analysis.md).
 
-Changes limited to READMEs and the documentation paths selected in the workflow receive a patch whitespace check. Other changes and manual workflow runs execute the full offline suite. A documentation-only CI result does not imply that Rust tests ran.
+Changes limited to the following paths receive a patch whitespace check and skip the Rust steps:
+
+- READMEs, Markdown under `docs/`, PNG/SVG files under `docs/assets/`, and PDFs under `docs/ase2025/`.
+- The static website under `site/` and its `.github/workflows/pages.yml` workflow.
+- `CONTRIBUTING.md`, `LICENSE`, `CITATION.cff`, Issue templates under `.github/ISSUE_TEMPLATE/`, and `.github/pull_request_template.md`.
+
+The workflow checks all changed paths in the PR or push. Any path outside this list runs the full offline suite, including changes to Rust code, build configuration, generation templates, validation scripts, Docker files, or the native CI workflow itself. Manual runs and unavailable comparison commits also run the full suite. Renames are checked as a deletion and an addition. A successful result that reports skipped Rust steps does not imply that Rust tests ran.
+
+Website changes independently trigger the [Pages workflow](../.github/workflows/pages.yml), which checks JavaScript syntax, static assets, and fragment links before uploading the site artifact. Pull requests build and check the site; deployment is limited to `main`.
 
 The independent [Docker checks workflow](../.github/workflows/docker.yml) builds a Linux AMD64 image, checks its Python, compiler, and coverage tools, installs all four PALM tool packages, and checks their command entry points. It runs for changes to Docker files, toolchain files, Cargo manifests/lockfiles, build scripts, build-utils, root Cargo configuration, the installer, or its own workflow. Ordinary Rust logic and documentation changes do not trigger it. The image uses BuildKit's GitHub Actions layer cache and is loaded only into the runner's local Docker engine.
 
